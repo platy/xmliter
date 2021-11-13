@@ -1,0 +1,8 @@
+[package]
+name = "html5streams"
+description = "Helpers to perform streaming rewrites, parsing & sanitisation of html documents using html5ever"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+html5ever = "0.25"
