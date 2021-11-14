@@ -1,3 +1,5 @@
+#![allow(unused)]
+use core::fmt;
 use std::borrow::Cow;
 
 use html5ever::{
@@ -5,7 +7,7 @@ use html5ever::{
     *,
 };
 
-use crate::{HtmlPathElement, HtmlSink};
+use crate::{ElementSkipper, HtmlPathElement, HtmlSink};
 
 pub fn parse_document<Sink>(sink: Sink, opts: ParseOpts) -> Parser<impl TreeSink>
 where
@@ -15,16 +17,17 @@ where
     html5ever::parse_document(sink, opts)
 }
 
-pub fn parse_fragment<Sink>(
-    sink: Sink,
-    opts: ParseOpts,
-    context_name: QualName,
-    context_attrs: Vec<Attribute>,
-) -> Parser<impl TreeSink>
+pub fn parse_fragment<Sink>(sink: Sink, opts: ParseOpts) -> Parser<impl TreeSink>
 where
     Sink: HtmlSink<u32>,
 {
-    let sink = ParseTraverser::new_fragment(sink);
+    let context_name = QualName {
+        prefix: None,
+        ns: ns!(html),
+        local: local_name!("body"),
+    };
+    let context_attrs = vec![];
+    let sink = ParseTraverser::new_fragment(ElementSkipper::wrap(sink).tag("html")); // TODO fins a way to do this without skipping filter
     html5ever::parse_fragment(sink, opts, context_name, context_attrs)
 }
 
@@ -48,6 +51,16 @@ impl TraversalNode {
             name: self.name.clone(),
             attrs: Cow::Borrowed(&self.attrs),
         }
+    }
+}
+
+impl fmt::Display for TraversalNode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "#{}: <{} {:?}>",
+            self.handle, self.name.local, &self.attrs
+        )
     }
 }
 
@@ -95,14 +108,14 @@ impl<I> ParseTraverser<I> {
 impl<I: HtmlSink<u32>> TreeSink for ParseTraverser<I> {
     type Handle = u32;
 
-    type Output = ();
+    type Output = I::Output;
 
     fn finish(self) -> Self::Output {
         self.inner.finish()
     }
 
     fn parse_error(&mut self, msg: std::borrow::Cow<'static, str>) {
-        panic!("Parse error : {}", msg);
+        println!("Parse error : {}", msg);
     }
 
     fn get_document(&mut self) -> Self::Handle {
@@ -167,7 +180,11 @@ impl<I: HtmlSink<u32>> TreeSink for ParseTraverser<I> {
                         .unwrap();
                     let element = self.free_nodes.remove(child_index);
                     assert_eq!(element.handle, handle);
-                    println!("appending child {} = {:?} to {:?}", handle, element, parent);
+                    println!(
+                        "appending child {} to {}",
+                        &element,
+                        parent.map_or(String::new(), TraversalNode::to_string)
+                    );
                     self.inner.append_element(
                         &self
                             .traversal
@@ -179,7 +196,11 @@ impl<I: HtmlSink<u32>> TreeSink for ParseTraverser<I> {
                     self.traversal.push(element);
                 }
                 NodeOrText::AppendText(text) => {
-                    println!("appending child \"{}\" to {:?}", text.to_string(), parent);
+                    println!(
+                        "appending child \"{}\" to {}",
+                        text.to_string(),
+                        parent.map_or(String::new(), TraversalNode::to_string)
+                    );
                     self.inner.append_text(
                         &self
                             .traversal

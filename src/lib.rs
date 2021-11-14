@@ -1,4 +1,4 @@
-use std::{borrow::Cow, io::Write};
+use std::{borrow::Cow, io::Write, iter, marker::PhantomData, mem};
 
 use html5ever::{
     serialize::{self, Serializer},
@@ -9,18 +9,21 @@ mod traverser;
 
 pub use traverser::*;
 
+#[derive(Clone)]
 pub struct HtmlPathElement<'a, Handle> {
-    handle: Handle,
-    name: html5ever::QualName,
-    attrs: Cow<'a, [Attribute]>,
+    pub handle: Handle,
+    pub name: html5ever::QualName,
+    pub attrs: Cow<'a, [Attribute]>,
 }
 
 pub type HtmlPath<'a, Handle> = &'a [HtmlPathElement<'a, Handle>];
 
-pub trait HtmlSink<InputHandle>
+pub trait HtmlSink<InputHandle>: Sized
 where
     InputHandle: Eq + Copy,
 {
+    type Output;
+
     fn append_doctype_to_document(
         &mut self,
         name: html5ever::tendril::StrTendril,
@@ -31,12 +34,16 @@ where
     fn append_element(
         &mut self,
         path: HtmlPath<'_, InputHandle>,
-        element: HtmlPathElement<'_, InputHandle>,
+        element: HtmlPathElement<'_, InputHandle>, // TODO : why is this not a reference?
     );
 
     fn append_text(&mut self, path: HtmlPath<InputHandle>, text: &str);
 
-    fn finish(self);
+    fn reset(&mut self) -> Self::Output;
+
+    fn finish(mut self) -> Self::Output {
+        self.reset()
+    }
 }
 
 struct OpenElement<Handle> {
@@ -70,7 +77,11 @@ impl<Wr: Write, InputHandle: Eq> HtmlSerializer<Wr, InputHandle> {
     }
 }
 
-impl<Wr: Write, InputHandle: Eq + Copy> HtmlSink<InputHandle> for HtmlSerializer<Wr, InputHandle> {
+impl<Wr: Write, InputHandle: Eq + Copy> HtmlSink<InputHandle>
+    for &mut HtmlSerializer<Wr, InputHandle>
+{
+    type Output = ();
+
     fn append_element(
         &mut self,
         path: HtmlPath<'_, InputHandle>,
@@ -96,7 +107,7 @@ impl<Wr: Write, InputHandle: Eq + Copy> HtmlSink<InputHandle> for HtmlSerializer
         self.inner.write_text(text).unwrap();
     }
 
-    fn finish(mut self) {
+    fn reset(&mut self) -> Self::Output {
         self.pop_to_path(&[])
     }
 
@@ -138,6 +149,8 @@ impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> ElementRemover<InputHandl
 impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> HtmlSink<InputHandle>
     for ElementRemover<InputHandle, S>
 {
+    type Output = S::Output;
+
     fn append_doctype_to_document(
         &mut self,
         name: html5ever::tendril::StrTendril,
@@ -184,23 +197,28 @@ impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> HtmlSink<InputHandle>
         self.inner.append_text(path, text)
     }
 
-    fn finish(self) {
-        self.inner.finish()
+    fn reset(&mut self) -> Self::Output {
+        self.skip_handle = None;
+        self.inner.reset()
     }
 }
 
-pub struct ElementSelector<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> {
+pub struct ElementSelector<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>, O = ()> {
     inner: S,
     tags: Vec<&'static str>,
     select_handle: Option<InputHandle>,
+    output: O,
 }
 
-impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> ElementSelector<InputHandle, S> {
-    pub fn wrap(sink: S) -> Self {
+impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>, O: Default>
+    ElementSelector<InputHandle, S, O>
+{
+    pub fn wrap(inner: S) -> Self {
         Self {
-            inner: sink,
+            inner,
             tags: vec![],
             select_handle: None,
+            output: O::default(),
         }
     }
 
@@ -210,13 +228,19 @@ impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> ElementSelector<InputHand
             inner: self.inner,
             tags: self.tags,
             select_handle: self.select_handle,
+            output: self.output,
         }
     }
 }
 
-impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> HtmlSink<InputHandle>
-    for ElementSelector<InputHandle, S>
+impl<InputHandle, S, O> HtmlSink<InputHandle> for ElementSelector<InputHandle, S, O>
+where
+    InputHandle: Eq + Copy,
+    S: HtmlSink<InputHandle>,
+    O: Extend<S::Output> + Default,
 {
+    type Output = O;
+
     fn append_doctype_to_document(
         &mut self,
         _name: html5ever::tendril::StrTendril,
@@ -236,16 +260,21 @@ impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> HtmlSink<InputHandle>
                 .enumerate()
                 .find_map(|(index, elem)| (elem.handle == select_handle).then(|| index))
             {
-                self.inner.append_element(&path[select_index..], element)
+                // select continues
+                self.inner.append_element(&path[select_index..], element);
+                return;
             } else {
-                self.select_handle = None
+                // select ends
+                self.select_handle = None;
+                self.output.extend(iter::once(self.inner.reset()));
             }
-        } else {
-            let select = self.tags.contains(&&*element.name.local);
-            if select {
-                self.select_handle = Some(element.handle);
-                self.inner.append_element(&[], element)
-            }
+        }
+        let select = self.tags.contains(&&*element.name.local);
+        if select {
+            // select starts
+            let select_handle = element.handle;
+            self.inner.append_element(&[], element);
+            self.select_handle = Some(select_handle);
         }
     }
 
@@ -263,8 +292,84 @@ impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> HtmlSink<InputHandle>
         }
     }
 
-    fn finish(self) {
-        self.inner.finish()
+    fn reset(&mut self) -> Self::Output {
+        if self.select_handle.take().is_some() {
+            self.output.extend(iter::once(self.inner.reset()));
+            self.select_handle = None
+        }
+        mem::take(&mut self.output)
+    }
+}
+
+pub struct ElementSkipper<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> {
+    inner: S,
+    tags: Vec<&'static str>,
+    _data: PhantomData<InputHandle>, // maybe better to make the handle into a trait associated type
+}
+
+impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> ElementSkipper<InputHandle, S> {
+    pub fn wrap(inner: S) -> Self {
+        Self {
+            inner,
+            tags: vec![],
+            _data: PhantomData::default(),
+        }
+    }
+
+    pub fn tag(mut self, tag: &'static str) -> Self {
+        self.tags.push(tag);
+        Self {
+            inner: self.inner,
+            tags: self.tags,
+            _data: PhantomData::default(),
+        }
+    }
+}
+
+impl<InputHandle, S> HtmlSink<InputHandle> for ElementSkipper<InputHandle, S>
+where
+    InputHandle: Eq + Copy,
+    S: HtmlSink<InputHandle>,
+{
+    type Output = S::Output;
+
+    fn append_doctype_to_document(
+        &mut self,
+        _name: html5ever::tendril::StrTendril,
+        _public_id: html5ever::tendril::StrTendril,
+        _system_id: html5ever::tendril::StrTendril,
+    ) {
+    }
+
+    fn append_element(
+        &mut self,
+        path: HtmlPath<'_, InputHandle>,
+        element: HtmlPathElement<'_, InputHandle>,
+    ) {
+        if self.tags.contains(&&*element.name.local) {
+            return;
+        }
+        // TODO optimise when not hitting
+        let filtered_path = path
+            .iter()
+            .filter(|element| !self.tags.contains(&&*element.name.local))
+            .cloned()
+            .collect::<Vec<_>>();
+        self.inner.append_element(filtered_path.as_slice(), element);
+    }
+
+    fn append_text(&mut self, path: HtmlPath<InputHandle>, text: &str) {
+        // TODO optimise when not hitting
+        let filtered_path = path
+            .iter()
+            .filter(|element| !self.tags.contains(&&*element.name.local))
+            .cloned()
+            .collect::<Vec<_>>();
+        self.inner.append_text(filtered_path.as_slice(), text);
+    }
+
+    fn reset(&mut self) -> Self::Output {
+        self.inner.reset()
     }
 }
 
@@ -272,34 +377,43 @@ impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> HtmlSink<InputHandle>
 mod test {
     use super::*;
     use html5ever::{
-        local_name, namespace_url, ns, serialize::SerializeOpts, tendril::TendrilSink, ParseOpts,
-        QualName,
+        local_name, namespace_url, ns,
+        serialize::{SerializeOpts, TraversalScope},
+        tendril::TendrilSink,
+        ParseOpts, QualName,
     };
+
+    fn stream_doc(test: &str, sink: impl HtmlSink<u32>) {
+        let mut opts = ParseOpts::default();
+        opts.tree_builder.exact_errors = true;
+        let parser = parse_document(sink, opts);
+        parser.one(test);
+    }
+
+    fn serialiser(buf: &mut Vec<u8>) -> HtmlSerializer<&mut Vec<u8>, u32> {
+        let opts = SerializeOpts::default();
+        HtmlSerializer::new(buf, opts)
+    }
 
     #[test]
     fn doc_identity() {
         let mut buf = Vec::new();
-        let sink = HtmlSerializer::new(&mut buf, SerializeOpts::default());
-        let parser = parse_document(sink, ParseOpts::default());
+        let mut sink = serialiser(&mut buf);
         let test = "<!DOCTYPE html><html><head></head><body><p><b>hello</b></p><p>world!</p></body></html>";
-        parser.one(test);
+        stream_doc(test, &mut sink);
         assert_eq!(String::from_utf8(buf).unwrap(), test);
     }
 
-    #[ignore = "haven't figured out how to do fragments yet"]
+    #[test]
+    // #[ignore = "html5ever mysteriously adds a <html> root"]
     fn fragment_identity() {
         let mut buf = Vec::new();
-        let sink = HtmlSerializer::new(&mut buf, SerializeOpts::default());
-        let parser = parse_fragment(
-            sink,
-            ParseOpts::default(),
-            QualName {
-                prefix: None,
-                ns: ns!(),
-                local: local_name!("body"),
-            },
-            vec![],
-        );
+        let mut opts = SerializeOpts::default();
+        opts.traversal_scope = TraversalScope::ChildrenOnly(None);
+        let mut sink = HtmlSerializer::new(&mut buf, opts);
+        let mut opts = ParseOpts::default();
+        opts.tree_builder.exact_errors = true;
+        let parser = parse_fragment(&mut sink, opts);
         let test = "<p><b>hello</b></p><p>world!</p>";
         parser.one(test);
         assert_eq!(String::from_utf8(buf).unwrap(), test);
@@ -308,29 +422,23 @@ mod test {
     #[test]
     fn remove_elements() {
         let mut buf = Vec::new();
-        let sink = ElementRemover::wrap(HtmlSerializer::new(&mut buf, SerializeOpts::default()))
-            .class("hello");
-        let parser = parse_document(sink, ParseOpts::default());
+        let mut serializer = serialiser(&mut buf);
         let test = r#"<!DOCTYPE html><html><head></head><body><p class="hello"><b>hello</b></p><p>world!</p></body></html>"#;
-        parser.one(test);
+        stream_doc(test, ElementRemover::wrap(&mut serializer).class("hello"));
         assert_eq!(
-            String::from_utf8(buf).unwrap(),
-            r#"<!DOCTYPE html><html><head></head><body><p>world!</p></body></html>"#
+            buf,
+            br#"<!DOCTYPE html><html><head></head><body><p>world!</p></body></html>"#
         );
     }
 
     #[test] // for selection, a selected node needs to be appended to the document, if it is not already part of a selected tree. i think for this all to work, either each processor needs to have it's own traversal tree, or maybe, the traversal tree builder from a Sink is only the first step and the processing actually happens using a different interface, probably entirely triggered by appends, but also having a (filtered) access to the tracversal scope
     fn select_element() {
         let mut buf = Vec::new();
-        let sink = ElementSelector::wrap(HtmlSerializer::new(&mut buf, SerializeOpts::default()))
-            .tag("body");
-        let parser = parse_document(sink, ParseOpts::default());
+        let mut serializer = serialiser(&mut buf);
+        let sink = ElementSelector::<_, _>::wrap(&mut serializer).tag("p");
         let test = "<!DOCTYPE html><html><head></head><body><p><b>hello</b></p><p>world!</p></body></html>";
-        parser.one(test);
-        assert_eq!(
-            String::from_utf8(buf).unwrap(),
-            "<body><p><b>hello</b></p><p>world!</p></body>"
-        );
+        stream_doc(test, sink);
+        assert_eq!(buf, b"<p><b>hello</b></p><p>world!</p>");
     }
 
     #[test]
