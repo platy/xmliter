@@ -1,5 +1,3 @@
-//! Main things to match: name, class, id, combinations thereof, sequences thereof and options thereof
-
 use html5ever::{tendril::StrTendril, *};
 
 use crate::{HtmlPath, HtmlPathElement};
@@ -10,6 +8,10 @@ pub trait Matcher {
         path: HtmlPath<'_, Handle>,
         element: &HtmlPathElement<'_, Handle>,
     ) -> bool;
+
+    fn or<O: Matcher>(self, other: O) -> OrMatcher<Self, O> where Self: Sized {
+        OrMatcher(self, other)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -68,5 +70,44 @@ impl Matcher for ElementMatcher {
         element: &HtmlPathElement<'_, Handle>,
     ) -> bool {
         self.element_match(element)
+    }
+}
+
+impl<I: Copy + DoubleEndedIterator<Item = ElementMatcher>> Matcher for I {
+    fn is_match<Handle>(
+        &self,
+        path: HtmlPath<'_, Handle>,
+        element: &HtmlPathElement<'_, Handle>,
+    ) -> bool {
+        let mut to_match = self.into_iter().rev();
+        if let Some(end_matcher) = to_match.next() {
+            if !end_matcher.element_match(element) {
+                return false;
+            }
+        } else {
+            return true;
+        }
+        let mut path = path.into_iter().rev();
+        'outer: while let Some(matcher) = to_match.next() {
+            while let Some(element) = path.next() {
+                if matcher.element_match(element) {
+                    continue 'outer;
+                }
+            }
+            return false;
+        }
+        true
+    }
+}
+
+pub struct OrMatcher<A: Matcher, B: Matcher>(A, B);
+
+impl<A: Matcher, B: Matcher> Matcher for OrMatcher<A, B> {
+    fn is_match<Handle>(
+        &self,
+        path: HtmlPath<'_, Handle>,
+        element: &HtmlPathElement<'_, Handle>,
+    ) -> bool {
+        self.0.is_match(path, element) || self.1.is_match(path, element)
     }
 }
