@@ -1,12 +1,15 @@
-use std::{borrow::Cow, io::Write, iter, marker::PhantomData, mem};
+use std::{borrow::Cow, io::Write, iter, mem};
 
 use html5ever::{
     serialize::{self, Serializer},
-    Attribute,
+    tendril::StrTendril,
+    Attribute, QualName,
 };
 
+mod matcher;
 mod traverser;
 
+use matcher::{ElementMatcher, Matcher};
 pub use traverser::*;
 
 #[derive(Clone)]
@@ -16,11 +19,32 @@ pub struct HtmlPathElement<'a, Handle> {
     pub attrs: Cow<'a, [Attribute]>,
 }
 
+impl<'a, Handle> HtmlPathElement<'a, Handle> {
+    fn attr(&self, name: QualName) -> Option<&StrTendril> {
+        self.attrs
+            .iter()
+            .find_map(|a| (a.name == name).then(|| &a.value))
+    }
+
+    fn classes(&self) -> iter::Flatten<std::option::IntoIter<std::str::SplitWhitespace<'_>>> {
+        use html5ever::*;
+        const CLASS: QualName = QualName {
+            prefix: None,
+            ns: ns!(),
+            local: local_name!("class"),
+        };
+        self.attr(CLASS)
+            .map(|value| value.split_whitespace())
+            .into_iter()
+            .flatten()
+    }
+}
+
 pub type HtmlPath<'a, Handle> = &'a [HtmlPathElement<'a, Handle>];
 
-pub trait HtmlSink<InputHandle>: Sized
+pub trait HtmlSink<Handle>: Sized
 where
-    InputHandle: Eq + Copy,
+    Handle: Eq + Copy,
 {
     type Output;
 
@@ -31,13 +55,9 @@ where
         system_id: &html5ever::tendril::StrTendril,
     );
 
-    fn append_element(
-        &mut self,
-        path: HtmlPath<'_, InputHandle>,
-        element: &HtmlPathElement<'_, InputHandle>,
-    );
+    fn append_element(&mut self, path: HtmlPath<'_, Handle>, element: &HtmlPathElement<'_, Handle>);
 
-    fn append_text(&mut self, path: HtmlPath<InputHandle>, text: &str);
+    fn append_text(&mut self, path: HtmlPath<Handle>, text: &str);
 
     fn reset(&mut self) -> Self::Output;
 
@@ -51,13 +71,13 @@ struct OpenElement<Handle> {
     name: html5ever::QualName,
 }
 
-pub struct HtmlSerializer<Wr: Write, InputHandle> {
+pub struct HtmlSerializer<Wr: Write, Handle> {
     inner: html5ever::serialize::HtmlSerializer<Wr>,
-    open_element_path: Vec<OpenElement<InputHandle>>,
+    open_element_path: Vec<OpenElement<Handle>>,
 }
 
-impl<Wr: Write, InputHandle: Eq> HtmlSerializer<Wr, InputHandle> {
-    fn pop_to_path(&mut self, path: HtmlPath<'_, InputHandle>) {
+impl<Wr: Write, Handle: Eq> HtmlSerializer<Wr, Handle> {
+    fn pop_to_path(&mut self, path: HtmlPath<'_, Handle>) {
         assert!(path.len() <= self.open_element_path.len());
         assert!(path
             .iter()
@@ -77,15 +97,13 @@ impl<Wr: Write, InputHandle: Eq> HtmlSerializer<Wr, InputHandle> {
     }
 }
 
-impl<Wr: Write, InputHandle: Eq + Copy> HtmlSink<InputHandle>
-    for &mut HtmlSerializer<Wr, InputHandle>
-{
+impl<Wr: Write, Handle: Eq + Copy> HtmlSink<Handle> for &mut HtmlSerializer<Wr, Handle> {
     type Output = ();
 
     fn append_element(
         &mut self,
-        path: HtmlPath<'_, InputHandle>,
-        element: &HtmlPathElement<'_, InputHandle>,
+        path: HtmlPath<'_, Handle>,
+        element: &HtmlPathElement<'_, Handle>,
     ) {
         self.pop_to_path(path);
 
@@ -101,7 +119,7 @@ impl<Wr: Write, InputHandle: Eq + Copy> HtmlSink<InputHandle>
         });
     }
 
-    fn append_text(&mut self, path: HtmlPath<InputHandle>, text: &str) {
+    fn append_text(&mut self, path: HtmlPath<Handle>, text: &str) {
         self.pop_to_path(path);
 
         self.inner.write_text(text).unwrap();
@@ -121,33 +139,24 @@ impl<Wr: Write, InputHandle: Eq + Copy> HtmlSink<InputHandle>
     }
 }
 
-pub struct ElementRemover<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> {
+pub struct ElementRemover<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Matcher> {
     inner: S,
-    classes: Vec<&'static str>,
-    skip_handle: Option<InputHandle>,
+    matcher: M,
+    skip_handle: Option<Handle>,
 }
 
-impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> ElementRemover<InputHandle, S> {
-    pub fn wrap(sink: S) -> Self {
+impl<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Matcher> ElementRemover<Handle, S, M> {
+    pub fn wrap(sink: S, matcher: M) -> Self {
         Self {
             inner: sink,
-            classes: vec![],
+            matcher,
             skip_handle: None,
         }
     }
-
-    pub fn class(mut self, class: &'static str) -> Self {
-        self.classes.push(class);
-        Self {
-            inner: self.inner,
-            classes: self.classes,
-            skip_handle: self.skip_handle,
-        }
-    }
 }
 
-impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> HtmlSink<InputHandle>
-    for ElementRemover<InputHandle, S>
+impl<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Matcher> HtmlSink<Handle>
+    for ElementRemover<Handle, S, M>
 {
     type Output = S::Output;
 
@@ -163,8 +172,8 @@ impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> HtmlSink<InputHandle>
 
     fn append_element(
         &mut self,
-        path: HtmlPath<'_, InputHandle>,
-        element: &HtmlPathElement<'_, InputHandle>,
+        path: HtmlPath<'_, Handle>,
+        element: &HtmlPathElement<'_, Handle>,
     ) {
         if let Some(skip_handle) = self.skip_handle {
             if path.iter().any(|elem| elem.handle == skip_handle) {
@@ -173,12 +182,7 @@ impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> HtmlSink<InputHandle>
                 self.skip_handle = None
             }
         }
-        let skip = element.attrs.iter().any(|a| {
-            &a.name.local == "class"
-                && a.value
-                    .split_whitespace()
-                    .any(|class| self.classes.contains(&class))
-        });
+        let skip = self.matcher.is_match(path, element);
         if skip {
             self.skip_handle = Some(element.handle);
             return;
@@ -186,7 +190,7 @@ impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> HtmlSink<InputHandle>
         self.inner.append_element(path, element)
     }
 
-    fn append_text(&mut self, path: HtmlPath<InputHandle>, text: &str) {
+    fn append_text(&mut self, path: HtmlPath<Handle>, text: &str) {
         if let Some(skip_handle) = self.skip_handle {
             if path.iter().any(|elem| elem.handle == skip_handle) {
                 return;
@@ -203,40 +207,30 @@ impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> HtmlSink<InputHandle>
     }
 }
 
-pub struct ElementSelector<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>, O = ()> {
+pub struct ElementSelector<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Matcher, O = ()> {
     inner: S,
-    tags: Vec<&'static str>,
-    select_handle: Option<InputHandle>,
+    matcher: M,
+    select_handle: Option<Handle>,
     output: O,
 }
 
-impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>, O: Default>
-    ElementSelector<InputHandle, S, O>
+impl<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Matcher, O: Default>
+    ElementSelector<Handle, S, M, O>
 {
-    pub fn wrap(inner: S) -> Self {
+    pub fn wrap(inner: S, matcher: M) -> Self {
         Self {
             inner,
-            tags: vec![],
+            matcher,
             select_handle: None,
             output: O::default(),
         }
     }
-
-    pub fn tag(mut self, tag: &'static str) -> Self {
-        self.tags.push(tag);
-        Self {
-            inner: self.inner,
-            tags: self.tags,
-            select_handle: self.select_handle,
-            output: self.output,
-        }
-    }
 }
 
-impl<InputHandle, S, O> HtmlSink<InputHandle> for ElementSelector<InputHandle, S, O>
+impl<Handle, S, M: Matcher, O> HtmlSink<Handle> for ElementSelector<Handle, S, M, O>
 where
-    InputHandle: Eq + Copy,
-    S: HtmlSink<InputHandle>,
+    Handle: Eq + Copy,
+    S: HtmlSink<Handle>,
     O: Extend<S::Output> + Default,
 {
     type Output = O;
@@ -251,8 +245,8 @@ where
 
     fn append_element(
         &mut self,
-        path: HtmlPath<'_, InputHandle>,
-        element: &HtmlPathElement<'_, InputHandle>,
+        path: HtmlPath<'_, Handle>,
+        element: &HtmlPathElement<'_, Handle>,
     ) {
         if let Some(select_handle) = self.select_handle {
             if let Some(select_index) = path
@@ -269,7 +263,7 @@ where
                 self.output.extend(iter::once(self.inner.reset()));
             }
         }
-        let select = self.tags.contains(&&*element.name.local);
+        let select = self.matcher.is_match(path, element);
         if select {
             // select starts
             let select_handle = element.handle;
@@ -278,7 +272,7 @@ where
         }
     }
 
-    fn append_text(&mut self, path: HtmlPath<InputHandle>, text: &str) {
+    fn append_text(&mut self, path: HtmlPath<Handle>, text: &str) {
         if let Some(select_handle) = self.select_handle {
             if let Some(select_index) = path
                 .iter()
@@ -301,35 +295,21 @@ where
     }
 }
 
-pub struct ElementSkipper<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> {
+pub struct ElementSkipper<S> {
     inner: S,
-    tags: Vec<&'static str>,
-    _data: PhantomData<InputHandle>, // maybe better to make the handle into a trait associated type
+    matcher: ElementMatcher,
 }
 
-impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> ElementSkipper<InputHandle, S> {
-    pub fn wrap(inner: S) -> Self {
-        Self {
-            inner,
-            tags: vec![],
-            _data: PhantomData::default(),
-        }
-    }
-
-    pub fn tag(mut self, tag: &'static str) -> Self {
-        self.tags.push(tag);
-        Self {
-            inner: self.inner,
-            tags: self.tags,
-            _data: PhantomData::default(),
-        }
+impl<S> ElementSkipper<S> {
+    pub fn wrap(inner: S, matcher: ElementMatcher) -> Self {
+        Self { inner, matcher }
     }
 }
 
-impl<InputHandle, S> HtmlSink<InputHandle> for ElementSkipper<InputHandle, S>
+impl<Handle, S> HtmlSink<Handle> for ElementSkipper<S>
 where
-    InputHandle: Eq + Copy,
-    S: HtmlSink<InputHandle>,
+    Handle: Eq + Copy,
+    S: HtmlSink<Handle>,
 {
     type Output = S::Output;
 
@@ -343,26 +323,26 @@ where
 
     fn append_element(
         &mut self,
-        path: HtmlPath<'_, InputHandle>,
-        element: &HtmlPathElement<'_, InputHandle>,
+        path: HtmlPath<'_, Handle>,
+        element: &HtmlPathElement<'_, Handle>,
     ) {
-        if self.tags.contains(&&*element.name.local) {
+        if self.matcher.is_match(path, element) {
             return;
         }
         // TODO optimise when not hitting
         let filtered_path = path
             .iter()
-            .filter(|element| !self.tags.contains(&&*element.name.local))
+            .filter(|element| !self.matcher.element_match(element))
             .cloned()
             .collect::<Vec<_>>();
         self.inner.append_element(filtered_path.as_slice(), element);
     }
 
-    fn append_text(&mut self, path: HtmlPath<InputHandle>, text: &str) {
+    fn append_text(&mut self, path: HtmlPath<Handle>, text: &str) {
         // TODO optimise when not hitting
         let filtered_path = path
             .iter()
-            .filter(|element| !self.tags.contains(&&*element.name.local))
+            .filter(|element| !self.matcher.element_match(element))
             .cloned()
             .collect::<Vec<_>>();
         self.inner.append_text(filtered_path.as_slice(), text);
@@ -409,8 +389,11 @@ impl<Handle: Copy + Eq, A: HtmlSink<Handle>, B: HtmlSink<Handle>> HtmlSink<Handl
 
 #[cfg(test)]
 mod test {
+    use crate::matcher::ElementMatcher;
+
     use super::*;
     use html5ever::{
+        local_name,
         serialize::{SerializeOpts, TraversalScope},
         tendril::TendrilSink,
         ParseOpts,
@@ -457,10 +440,16 @@ mod test {
         let mut buf = Vec::new();
         let mut serializer = serialiser(&mut buf);
         let test = r#"<!DOCTYPE html><html><head></head><body><p class="hello"><b>hello</b></p><p>world!</p></body></html>"#;
-        stream_doc(test, ElementRemover::wrap(&mut serializer).class("hello"));
+        stream_doc(
+            test,
+            ElementRemover::wrap(
+                &mut serializer,
+                ElementMatcher::default().class("hello".into()),
+            ),
+        );
         assert_eq!(
-            buf,
-            br#"<!DOCTYPE html><html><head></head><body><p>world!</p></body></html>"#
+            String::from_utf8(buf).unwrap(),
+            r#"<!DOCTYPE html><html><head></head><body><p>world!</p></body></html>"#
         );
     }
 
@@ -468,7 +457,10 @@ mod test {
     fn select_element() {
         let mut buf = Vec::new();
         let mut serializer = serialiser(&mut buf);
-        let sink = ElementSelector::<_, _>::wrap(&mut serializer).tag("p");
+        let sink = ElementSelector::<_, _, _>::wrap(
+            &mut serializer,
+            ElementMatcher::default().name(local_name!("p")),
+        );
         let test = "<!DOCTYPE html><html><head></head><body><p><b>hello</b></p><p>world!</p></body></html>";
         stream_doc(test, sink);
         assert_eq!(buf, b"<p><b>hello</b></p><p>world!</p>");

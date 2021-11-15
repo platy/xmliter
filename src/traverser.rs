@@ -7,7 +7,7 @@ use html5ever::{
     *,
 };
 
-use crate::{ElementSkipper, HtmlPathElement, HtmlSink};
+use crate::{matcher::ElementMatcher, ElementSkipper, HtmlPathElement, HtmlSink};
 
 pub fn parse_document<Sink>(sink: Sink, opts: ParseOpts) -> Parser<impl TreeSink>
 where
@@ -27,7 +27,10 @@ where
         local: local_name!("body"),
     };
     let context_attrs = vec![];
-    let sink = ParseTraverser::new_fragment(ElementSkipper::wrap(sink).tag("html")); // TODO fins a way to do this without skipping filter
+    let sink = ParseTraverser::new_fragment(ElementSkipper::wrap(
+        sink,
+        ElementMatcher::default().name(local_name!("html")),
+    )); // TODO fins a way to do this without skipping filter
     html5ever::parse_fragment(sink, opts, context_name, context_attrs)
 }
 
