@@ -190,8 +190,8 @@ impl<I: HtmlSink<u32>> TreeSink for ParseTraverser<I> {
                             .traversal
                             .iter()
                             .map(TraversalNode::as_html_path_element)
-                            .collect::<Vec<_>>(),
-                        element.as_html_path_element(),
+                            .collect::<Vec<_>>(), // TODO these should be reused
+                        &element.as_html_path_element(),
                     );
                     self.traversal.push(element);
                 }
@@ -230,7 +230,7 @@ impl<I: HtmlSink<u32>> TreeSink for ParseTraverser<I> {
         system_id: html5ever::tendril::StrTendril,
     ) {
         self.inner
-            .append_doctype_to_document(name, public_id, system_id)
+            .append_doctype_to_document(&name, &public_id, &system_id)
     }
 
     fn get_template_contents(&mut self, target: &Self::Handle) -> Self::Handle {

@@ -26,15 +26,15 @@ where
 
     fn append_doctype_to_document(
         &mut self,
-        name: html5ever::tendril::StrTendril,
-        public_id: html5ever::tendril::StrTendril,
-        system_id: html5ever::tendril::StrTendril,
+        name: &html5ever::tendril::StrTendril,
+        public_id: &html5ever::tendril::StrTendril,
+        system_id: &html5ever::tendril::StrTendril,
     );
 
     fn append_element(
         &mut self,
         path: HtmlPath<'_, InputHandle>,
-        element: HtmlPathElement<'_, InputHandle>, // TODO : why is this not a reference?
+        element: &HtmlPathElement<'_, InputHandle>,
     );
 
     fn append_text(&mut self, path: HtmlPath<InputHandle>, text: &str);
@@ -85,7 +85,7 @@ impl<Wr: Write, InputHandle: Eq + Copy> HtmlSink<InputHandle>
     fn append_element(
         &mut self,
         path: HtmlPath<'_, InputHandle>,
-        element: HtmlPathElement<'_, InputHandle>,
+        element: &HtmlPathElement<'_, InputHandle>,
     ) {
         self.pop_to_path(path);
 
@@ -97,7 +97,7 @@ impl<Wr: Write, InputHandle: Eq + Copy> HtmlSink<InputHandle>
             .unwrap();
         self.open_element_path.push(OpenElement {
             handle: element.handle,
-            name: element.name,
+            name: element.name.clone(),
         });
     }
 
@@ -113,11 +113,11 @@ impl<Wr: Write, InputHandle: Eq + Copy> HtmlSink<InputHandle>
 
     fn append_doctype_to_document(
         &mut self,
-        name: html5ever::tendril::StrTendril,
-        _public_id: html5ever::tendril::StrTendril,
-        _system_id: html5ever::tendril::StrTendril,
+        name: &html5ever::tendril::StrTendril,
+        _public_id: &html5ever::tendril::StrTendril,
+        _system_id: &html5ever::tendril::StrTendril,
     ) {
-        self.inner.write_doctype(&name).unwrap()
+        self.inner.write_doctype(name).unwrap()
     }
 }
 
@@ -153,9 +153,9 @@ impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> HtmlSink<InputHandle>
 
     fn append_doctype_to_document(
         &mut self,
-        name: html5ever::tendril::StrTendril,
-        public_id: html5ever::tendril::StrTendril,
-        system_id: html5ever::tendril::StrTendril,
+        name: &html5ever::tendril::StrTendril,
+        public_id: &html5ever::tendril::StrTendril,
+        system_id: &html5ever::tendril::StrTendril,
     ) {
         self.inner
             .append_doctype_to_document(name, public_id, system_id)
@@ -164,7 +164,7 @@ impl<InputHandle: Eq + Copy, S: HtmlSink<InputHandle>> HtmlSink<InputHandle>
     fn append_element(
         &mut self,
         path: HtmlPath<'_, InputHandle>,
-        element: HtmlPathElement<'_, InputHandle>,
+        element: &HtmlPathElement<'_, InputHandle>,
     ) {
         if let Some(skip_handle) = self.skip_handle {
             if path.iter().any(|elem| elem.handle == skip_handle) {
@@ -243,16 +243,16 @@ where
 
     fn append_doctype_to_document(
         &mut self,
-        _name: html5ever::tendril::StrTendril,
-        _public_id: html5ever::tendril::StrTendril,
-        _system_id: html5ever::tendril::StrTendril,
+        _name: &html5ever::tendril::StrTendril,
+        _public_id: &html5ever::tendril::StrTendril,
+        _system_id: &html5ever::tendril::StrTendril,
     ) {
     }
 
     fn append_element(
         &mut self,
         path: HtmlPath<'_, InputHandle>,
-        element: HtmlPathElement<'_, InputHandle>,
+        element: &HtmlPathElement<'_, InputHandle>,
     ) {
         if let Some(select_handle) = self.select_handle {
             if let Some(select_index) = path
@@ -335,16 +335,16 @@ where
 
     fn append_doctype_to_document(
         &mut self,
-        _name: html5ever::tendril::StrTendril,
-        _public_id: html5ever::tendril::StrTendril,
-        _system_id: html5ever::tendril::StrTendril,
+        _name: &html5ever::tendril::StrTendril,
+        _public_id: &html5ever::tendril::StrTendril,
+        _system_id: &html5ever::tendril::StrTendril,
     ) {
     }
 
     fn append_element(
         &mut self,
         path: HtmlPath<'_, InputHandle>,
-        element: HtmlPathElement<'_, InputHandle>,
+        element: &HtmlPathElement<'_, InputHandle>,
     ) {
         if self.tags.contains(&&*element.name.local) {
             return;
@@ -373,14 +373,47 @@ where
     }
 }
 
+impl<Handle: Copy + Eq, A: HtmlSink<Handle>, B: HtmlSink<Handle>> HtmlSink<Handle> for (A, B) {
+    type Output = (A::Output, B::Output);
+
+    fn append_doctype_to_document(
+        &mut self,
+        name: &html5ever::tendril::StrTendril,
+        public_id: &html5ever::tendril::StrTendril,
+        system_id: &html5ever::tendril::StrTendril,
+    ) {
+        self.0
+            .append_doctype_to_document(name, public_id, system_id);
+        self.1
+            .append_doctype_to_document(name, public_id, system_id);
+    }
+
+    fn append_element(
+        &mut self,
+        path: HtmlPath<'_, Handle>,
+        element: &HtmlPathElement<'_, Handle>,
+    ) {
+        self.0.append_element(path, element);
+        self.1.append_element(path, element);
+    }
+
+    fn append_text(&mut self, path: HtmlPath<Handle>, text: &str) {
+        self.0.append_text(path, text);
+        self.1.append_text(path, text);
+    }
+
+    fn reset(&mut self) -> Self::Output {
+        (self.0.reset(), self.1.reset())
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
     use html5ever::{
-        local_name, namespace_url, ns,
         serialize::{SerializeOpts, TraversalScope},
         tendril::TendrilSink,
-        ParseOpts, QualName,
+        ParseOpts,
     };
 
     fn stream_doc(test: &str, sink: impl HtmlSink<u32>) {
