@@ -6,10 +6,10 @@ use html5ever::{
     Attribute, QualName,
 };
 
-mod matcher;
+pub mod selector;
 mod traverser;
 
-use matcher::{ElementMatcher, Matcher};
+use selector::{ContextualSelector, Selector};
 pub use traverser::*;
 
 #[derive(Clone)]
@@ -20,13 +20,13 @@ pub struct HtmlPathElement<'a, Handle> {
 }
 
 impl<'a, Handle> HtmlPathElement<'a, Handle> {
-    fn attr(&self, name: QualName) -> Option<&StrTendril> {
+    pub fn attr(&self, name: QualName) -> Option<&StrTendril> {
         self.attrs
             .iter()
             .find_map(|a| (a.name == name).then(|| &a.value))
     }
 
-    fn classes(&self) -> iter::Flatten<std::option::IntoIter<std::str::SplitWhitespace<'_>>> {
+    pub fn classes(&self) -> iter::Flatten<std::option::IntoIter<std::str::SplitWhitespace<'_>>> {
         use html5ever::*;
         const CLASS: QualName = QualName {
             prefix: None,
@@ -40,7 +40,7 @@ impl<'a, Handle> HtmlPathElement<'a, Handle> {
     }
 }
 
-pub type HtmlPath<'a, Handle> = &'a [HtmlPathElement<'a, Handle>];
+pub type HtmlContext<'a, Handle> = &'a [HtmlPathElement<'a, Handle>];
 
 pub trait HtmlSink<Handle>: Sized
 where
@@ -55,9 +55,13 @@ where
         system_id: &html5ever::tendril::StrTendril,
     );
 
-    fn append_element(&mut self, path: HtmlPath<'_, Handle>, element: &HtmlPathElement<'_, Handle>);
+    fn append_element(
+        &mut self,
+        path: HtmlContext<'_, Handle>,
+        element: &HtmlPathElement<'_, Handle>,
+    );
 
-    fn append_text(&mut self, path: HtmlPath<Handle>, text: &str);
+    fn append_text(&mut self, path: HtmlContext<Handle>, text: &str);
 
     fn reset(&mut self) -> Self::Output;
 
@@ -77,7 +81,7 @@ pub struct HtmlSerializer<Wr: Write, Handle> {
 }
 
 impl<Wr: Write, Handle: Eq> HtmlSerializer<Wr, Handle> {
-    fn pop_to_path(&mut self, path: HtmlPath<'_, Handle>) {
+    fn pop_to_path(&mut self, path: HtmlContext<'_, Handle>) {
         assert!(path.len() <= self.open_element_path.len());
         assert!(path
             .iter()
@@ -102,7 +106,7 @@ impl<Wr: Write, Handle: Eq + Copy> HtmlSink<Handle> for &mut HtmlSerializer<Wr, 
 
     fn append_element(
         &mut self,
-        path: HtmlPath<'_, Handle>,
+        path: HtmlContext<'_, Handle>,
         element: &HtmlPathElement<'_, Handle>,
     ) {
         self.pop_to_path(path);
@@ -119,7 +123,7 @@ impl<Wr: Write, Handle: Eq + Copy> HtmlSink<Handle> for &mut HtmlSerializer<Wr, 
         });
     }
 
-    fn append_text(&mut self, path: HtmlPath<Handle>, text: &str) {
+    fn append_text(&mut self, path: HtmlContext<Handle>, text: &str) {
         self.pop_to_path(path);
 
         self.inner.write_text(text).unwrap();
@@ -139,13 +143,13 @@ impl<Wr: Write, Handle: Eq + Copy> HtmlSink<Handle> for &mut HtmlSerializer<Wr, 
     }
 }
 
-pub struct ElementRemover<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Matcher> {
+pub struct ElementRemover<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Selector> {
     inner: S,
     matcher: M,
     skip_handle: Option<Handle>,
 }
 
-impl<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Matcher> ElementRemover<Handle, S, M> {
+impl<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Selector> ElementRemover<Handle, S, M> {
     pub fn wrap(sink: S, matcher: M) -> Self {
         Self {
             inner: sink,
@@ -155,7 +159,7 @@ impl<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Matcher> ElementRemover<Handle, 
     }
 }
 
-impl<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Matcher> HtmlSink<Handle>
+impl<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Selector> HtmlSink<Handle>
     for ElementRemover<Handle, S, M>
 {
     type Output = S::Output;
@@ -172,7 +176,7 @@ impl<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Matcher> HtmlSink<Handle>
 
     fn append_element(
         &mut self,
-        path: HtmlPath<'_, Handle>,
+        path: HtmlContext<'_, Handle>,
         element: &HtmlPathElement<'_, Handle>,
     ) {
         if let Some(skip_handle) = self.skip_handle {
@@ -182,7 +186,7 @@ impl<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Matcher> HtmlSink<Handle>
                 self.skip_handle = None
             }
         }
-        let skip = self.matcher.is_match(path, element);
+        let skip = self.matcher.context_match(path, element);
         if skip {
             self.skip_handle = Some(element.handle);
             return;
@@ -190,7 +194,7 @@ impl<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Matcher> HtmlSink<Handle>
         self.inner.append_element(path, element)
     }
 
-    fn append_text(&mut self, path: HtmlPath<Handle>, text: &str) {
+    fn append_text(&mut self, path: HtmlContext<Handle>, text: &str) {
         if let Some(skip_handle) = self.skip_handle {
             if path.iter().any(|elem| elem.handle == skip_handle) {
                 return;
@@ -207,16 +211,14 @@ impl<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Matcher> HtmlSink<Handle>
     }
 }
 
-pub struct ElementSelector<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Matcher, O = ()> {
+pub struct RootFilter<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Selector, O = ()> {
     inner: S,
     matcher: M,
     select_handle: Option<Handle>,
     output: O,
 }
 
-impl<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Matcher, O: Default>
-    ElementSelector<Handle, S, M, O>
-{
+impl<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Selector, O: Default> RootFilter<Handle, S, M, O> {
     pub fn wrap(inner: S, matcher: M) -> Self {
         Self {
             inner,
@@ -227,7 +229,7 @@ impl<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Matcher, O: Default>
     }
 }
 
-impl<Handle, S, M: Matcher, O> HtmlSink<Handle> for ElementSelector<Handle, S, M, O>
+impl<Handle, S, M: Selector, O> HtmlSink<Handle> for RootFilter<Handle, S, M, O>
 where
     Handle: Eq + Copy,
     S: HtmlSink<Handle>,
@@ -245,7 +247,7 @@ where
 
     fn append_element(
         &mut self,
-        path: HtmlPath<'_, Handle>,
+        path: HtmlContext<'_, Handle>,
         element: &HtmlPathElement<'_, Handle>,
     ) {
         if let Some(select_handle) = self.select_handle {
@@ -263,7 +265,7 @@ where
                 self.output.extend(iter::once(self.inner.reset()));
             }
         }
-        let select = self.matcher.is_match(path, element);
+        let select = self.matcher.context_match(path, element);
         if select {
             // select starts
             let select_handle = element.handle;
@@ -272,7 +274,7 @@ where
         }
     }
 
-    fn append_text(&mut self, path: HtmlPath<Handle>, text: &str) {
+    fn append_text(&mut self, path: HtmlContext<Handle>, text: &str) {
         if let Some(select_handle) = self.select_handle {
             if let Some(select_index) = path
                 .iter()
@@ -295,18 +297,18 @@ where
     }
 }
 
-pub struct ElementSkipper<S> {
+pub struct ElementSkipper<S, M> {
     inner: S,
-    matcher: ElementMatcher,
+    matcher: M,
 }
 
-impl<S> ElementSkipper<S> {
-    pub fn wrap(inner: S, matcher: ElementMatcher) -> Self {
+impl<S, M: Selector> ElementSkipper<S, M> {
+    pub fn wrap(inner: S, matcher: M) -> Self {
         Self { inner, matcher }
     }
 }
 
-impl<Handle, S> HtmlSink<Handle> for ElementSkipper<S>
+impl<Handle, S, M: Selector> HtmlSink<Handle> for ElementSkipper<S, M>
 where
     Handle: Eq + Copy,
     S: HtmlSink<Handle>,
@@ -323,26 +325,26 @@ where
 
     fn append_element(
         &mut self,
-        path: HtmlPath<'_, Handle>,
+        path: HtmlContext<'_, Handle>,
         element: &HtmlPathElement<'_, Handle>,
     ) {
-        if self.matcher.is_match(path, element) {
+        if self.matcher.context_match(path, element) {
             return;
         }
         // TODO optimise when not hitting
         let filtered_path = path
             .iter()
-            .filter(|element| !self.matcher.element_match(element))
+            .filter(|element| !self.matcher.is_match(element))
             .cloned()
             .collect::<Vec<_>>();
         self.inner.append_element(filtered_path.as_slice(), element);
     }
 
-    fn append_text(&mut self, path: HtmlPath<Handle>, text: &str) {
+    fn append_text(&mut self, path: HtmlContext<Handle>, text: &str) {
         // TODO optimise when not hitting
         let filtered_path = path
             .iter()
-            .filter(|element| !self.matcher.element_match(element))
+            .filter(|element| !self.matcher.is_match(element))
             .cloned()
             .collect::<Vec<_>>();
         self.inner.append_text(filtered_path.as_slice(), text);
@@ -370,14 +372,14 @@ impl<Handle: Copy + Eq, A: HtmlSink<Handle>, B: HtmlSink<Handle>> HtmlSink<Handl
 
     fn append_element(
         &mut self,
-        path: HtmlPath<'_, Handle>,
+        path: HtmlContext<'_, Handle>,
         element: &HtmlPathElement<'_, Handle>,
     ) {
         self.0.append_element(path, element);
         self.1.append_element(path, element);
     }
 
-    fn append_text(&mut self, path: HtmlPath<Handle>, text: &str) {
+    fn append_text(&mut self, path: HtmlContext<Handle>, text: &str) {
         self.0.append_text(path, text);
         self.1.append_text(path, text);
     }
@@ -389,11 +391,8 @@ impl<Handle: Copy + Eq, A: HtmlSink<Handle>, B: HtmlSink<Handle>> HtmlSink<Handl
 
 #[cfg(test)]
 mod test {
-    use crate::matcher::ElementMatcher;
-
     use super::*;
     use html5ever::{
-        local_name,
         serialize::{SerializeOpts, TraversalScope},
         tendril::TendrilSink,
         ParseOpts,
@@ -442,10 +441,7 @@ mod test {
         let test = r#"<!DOCTYPE html><html><head></head><body><p class="hello"><b>hello</b></p><p>world!</p></body></html>"#;
         stream_doc(
             test,
-            ElementRemover::wrap(
-                &mut serializer,
-                ElementMatcher::default().class("hello".into()),
-            ),
+            ElementRemover::wrap(&mut serializer, css_select!(."hello")),
         );
         assert_eq!(
             String::from_utf8(buf).unwrap(),
@@ -457,10 +453,7 @@ mod test {
     fn select_element() {
         let mut buf = Vec::new();
         let mut serializer = serialiser(&mut buf);
-        let sink = ElementSelector::<_, _, _>::wrap(
-            &mut serializer,
-            ElementMatcher::default().name(local_name!("p")),
-        );
+        let sink = RootFilter::<_, _, _>::wrap(&mut serializer, css_select!("p"));
         let test = "<!DOCTYPE html><html><head></head><body><p><b>hello</b></p><p>world!</p></body></html>";
         stream_doc(test, sink);
         assert_eq!(buf, b"<p><b>hello</b></p><p>world!</p>");
