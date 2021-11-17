@@ -7,9 +7,16 @@ use html5ever::{
     *,
 };
 
-use crate::{css_select, selector::ElementSelector, ElementSkipper, HtmlPathElement, HtmlSink};
+use crate::{
+    css_select,
+    selector::{ContextualSelector, ElementSelector, Selector},
+    ElementSkipper, HtmlPathElement, HtmlSink,
+};
 
-pub fn parse_document<Sink>(sink: Sink, opts: ParseOpts) -> Parser<impl TreeSink>
+pub fn parse_document<Sink>(
+    sink: Sink,
+    opts: ParseOpts,
+) -> Parser<impl TreeSink<Output = Sink::Output>>
 where
     Sink: HtmlSink<u32>,
 {
@@ -17,7 +24,10 @@ where
     html5ever::parse_document(sink, opts)
 }
 
-pub fn parse_fragment<Sink>(sink: Sink, opts: ParseOpts) -> Parser<impl TreeSink>
+pub fn parse_fragment<Sink>(
+    sink: Sink,
+    opts: ParseOpts,
+) -> Parser<impl TreeSink<Output = Sink::Output>>
 where
     Sink: HtmlSink<u32>,
 {
@@ -142,7 +152,14 @@ impl<I: HtmlSink<u32>> TreeSink for ParseTraverser<I> {
     }
 
     fn create_comment(&mut self, text: html5ever::tendril::StrTendril) -> Self::Handle {
-        todo!()
+        println!("Ignoring html comment, inserting span instead : {}", text);
+        self.handle += 1;
+        self.free_nodes.push(TraversalNode {
+            handle: self.handle,
+            name: QualName { prefix: None, ns: ns!(html), local: local_name!("span") },
+            attrs: vec![],
+        });
+        self.handle
     }
 
     fn create_pi(

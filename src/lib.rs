@@ -211,14 +211,16 @@ impl<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Selector> HtmlSink<Handle>
     }
 }
 
-pub struct RootFilter<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Selector, O = ()> {
+pub struct RootFilter<Handle: Eq + Copy, S: HtmlSink<Handle>, M: ContextualSelector, O = ()> {
     inner: S,
     matcher: M,
     select_handle: Option<Handle>,
     output: O,
 }
 
-impl<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Selector, O: Default> RootFilter<Handle, S, M, O> {
+impl<Handle: Eq + Copy, S: HtmlSink<Handle>, M: ContextualSelector, O: Default>
+    RootFilter<Handle, S, M, O>
+{
     pub fn wrap(inner: S, matcher: M) -> Self {
         Self {
             inner,
@@ -229,7 +231,7 @@ impl<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Selector, O: Default> RootFilter
     }
 }
 
-impl<Handle, S, M: Selector, O> HtmlSink<Handle> for RootFilter<Handle, S, M, O>
+impl<Handle, S, M: ContextualSelector, O> HtmlSink<Handle> for RootFilter<Handle, S, M, O>
 where
     Handle: Eq + Copy,
     S: HtmlSink<Handle>,
