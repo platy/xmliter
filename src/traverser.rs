@@ -68,8 +68,13 @@ impl fmt::Display for TraversalNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "#{}: <{} {:?}>",
-            self.handle, self.name.local, &self.attrs
+            "#{}: <{}{}>",
+            self.handle,
+            self.name.local,
+            self.attrs
+                .iter()
+                .map(|att| format!(" {}=\"{}\"", att.name.local, &*att.value))
+                .collect::<String>()
         )
     }
 }
@@ -156,7 +161,11 @@ impl<I: HtmlSink<u32>> TreeSink for ParseTraverser<I> {
         self.handle += 1;
         self.free_nodes.push(TraversalNode {
             handle: self.handle,
-            name: QualName { prefix: None, ns: ns!(html), local: local_name!("span") },
+            name: QualName {
+                prefix: None,
+                ns: ns!(html),
+                local: local_name!("span"),
+            },
             attrs: vec![],
         });
         self.handle

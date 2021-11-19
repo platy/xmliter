@@ -1,4 +1,4 @@
-use std::{borrow::Cow, io::Write, iter, mem};
+use std::{borrow::Cow, fmt, io::Write, iter, mem};
 
 use html5ever::{
     serialize::{self, Serializer},
@@ -40,6 +40,16 @@ impl<'a, Handle> HtmlPathElement<'a, Handle> {
     }
 }
 
+impl<'a, Handle: fmt::Display> fmt::Display for HtmlPathElement<'a, Handle> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "#{} <{}", self.handle, &*self.name.local)?;
+        for Attribute { name, value } in self.attrs.iter() {
+            write!(f, " {}=\"{}\"", &*name.local, value)?;
+        }
+        write!(f, ">")
+    }
+}
+
 pub type HtmlContext<'a, Handle> = &'a [HtmlPathElement<'a, Handle>];
 
 pub trait HtmlSink<Handle>: Sized
@@ -57,11 +67,11 @@ where
 
     fn append_element(
         &mut self,
-        path: HtmlContext<'_, Handle>,
+        context: HtmlContext<'_, Handle>,
         element: &HtmlPathElement<'_, Handle>,
     );
 
-    fn append_text(&mut self, path: HtmlContext<Handle>, text: &str);
+    fn append_text(&mut self, context: HtmlContext<Handle>, text: &str);
 
     fn reset(&mut self) -> Self::Output;
 
@@ -80,14 +90,22 @@ pub struct HtmlSerializer<Wr: Write, Handle> {
     open_element_path: Vec<OpenElement<Handle>>,
 }
 
-impl<Wr: Write, Handle: Eq> HtmlSerializer<Wr, Handle> {
-    fn pop_to_path(&mut self, path: HtmlContext<'_, Handle>) {
-        assert!(path.len() <= self.open_element_path.len());
-        assert!(path
+impl<Wr: Write, Handle: Eq + fmt::Display> HtmlSerializer<Wr, Handle> {
+    fn pop_to_path(&mut self, context: HtmlContext<'_, Handle>) {
+        assert!(context
             .iter()
             .zip(&self.open_element_path)
             .all(|(a, b)| a.handle == b.handle));
-        while path.len() < self.open_element_path.len() {
+        if context.len() > self.open_element_path.len() {
+            panic!(
+                "Non-appended elements in context : {}",
+                context[self.open_element_path.len()..]
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<String>()
+            );
+        }
+        while context.len() < self.open_element_path.len() {
             let closed = self.open_element_path.pop().unwrap();
             self.inner.end_elem(closed.name).unwrap();
         }
@@ -101,15 +119,17 @@ impl<Wr: Write, Handle: Eq> HtmlSerializer<Wr, Handle> {
     }
 }
 
-impl<Wr: Write, Handle: Eq + Copy> HtmlSink<Handle> for &mut HtmlSerializer<Wr, Handle> {
+impl<Wr: Write, Handle: Eq + Copy + fmt::Display> HtmlSink<Handle>
+    for &mut HtmlSerializer<Wr, Handle>
+{
     type Output = ();
 
     fn append_element(
         &mut self,
-        path: HtmlContext<'_, Handle>,
+        context: HtmlContext<'_, Handle>,
         element: &HtmlPathElement<'_, Handle>,
     ) {
-        self.pop_to_path(path);
+        self.pop_to_path(context);
 
         self.inner
             .start_elem(
@@ -123,8 +143,8 @@ impl<Wr: Write, Handle: Eq + Copy> HtmlSink<Handle> for &mut HtmlSerializer<Wr, 
         });
     }
 
-    fn append_text(&mut self, path: HtmlContext<Handle>, text: &str) {
-        self.pop_to_path(path);
+    fn append_text(&mut self, context: HtmlContext<Handle>, text: &str) {
+        self.pop_to_path(context);
 
         self.inner.write_text(text).unwrap();
     }
@@ -176,33 +196,33 @@ impl<Handle: Eq + Copy, S: HtmlSink<Handle>, M: Selector> HtmlSink<Handle>
 
     fn append_element(
         &mut self,
-        path: HtmlContext<'_, Handle>,
+        context: HtmlContext<'_, Handle>,
         element: &HtmlPathElement<'_, Handle>,
     ) {
         if let Some(skip_handle) = self.skip_handle {
-            if path.iter().any(|elem| elem.handle == skip_handle) {
+            if context.iter().any(|elem| elem.handle == skip_handle) {
                 return;
             } else {
                 self.skip_handle = None
             }
         }
-        let skip = self.matcher.context_match(path, element);
+        let skip = self.matcher.context_match(context, element);
         if skip {
             self.skip_handle = Some(element.handle);
             return;
         }
-        self.inner.append_element(path, element)
+        self.inner.append_element(context, element)
     }
 
-    fn append_text(&mut self, path: HtmlContext<Handle>, text: &str) {
+    fn append_text(&mut self, context: HtmlContext<Handle>, text: &str) {
         if let Some(skip_handle) = self.skip_handle {
-            if path.iter().any(|elem| elem.handle == skip_handle) {
+            if context.iter().any(|elem| elem.handle == skip_handle) {
                 return;
             } else {
                 self.skip_handle = None
             }
         }
-        self.inner.append_text(path, text)
+        self.inner.append_text(context, text)
     }
 
     fn reset(&mut self) -> Self::Output {
@@ -249,17 +269,17 @@ where
 
     fn append_element(
         &mut self,
-        path: HtmlContext<'_, Handle>,
+        context: HtmlContext<'_, Handle>,
         element: &HtmlPathElement<'_, Handle>,
     ) {
         if let Some(select_handle) = self.select_handle {
-            if let Some(select_index) = path
+            if let Some(select_index) = context
                 .iter()
                 .enumerate()
                 .find_map(|(index, elem)| (elem.handle == select_handle).then(|| index))
             {
                 // select continues
-                self.inner.append_element(&path[select_index..], element);
+                self.inner.append_element(&context[select_index..], element);
                 return;
             } else {
                 // select ends
@@ -267,7 +287,7 @@ where
                 self.output.extend(iter::once(self.inner.reset()));
             }
         }
-        let select = self.matcher.context_match(path, element);
+        let select = self.matcher.context_match(context, element);
         if select {
             // select starts
             let select_handle = element.handle;
@@ -276,16 +296,19 @@ where
         }
     }
 
-    fn append_text(&mut self, path: HtmlContext<Handle>, text: &str) {
+    fn append_text(&mut self, context: HtmlContext<Handle>, text: &str) {
         if let Some(select_handle) = self.select_handle {
-            if let Some(select_index) = path
+            if let Some(select_index) = context
                 .iter()
                 .enumerate()
                 .find_map(|(index, elem)| (elem.handle == select_handle).then(|| index))
             {
-                self.inner.append_text(&path[select_index..], text)
+                // select continues
+                self.inner.append_text(&context[select_index..], text)
             } else {
-                self.select_handle = None
+                // select ends
+                self.select_handle = None;
+                self.output.extend(iter::once(self.inner.reset()));
             }
         }
     }
@@ -327,14 +350,14 @@ where
 
     fn append_element(
         &mut self,
-        path: HtmlContext<'_, Handle>,
+        context: HtmlContext<'_, Handle>,
         element: &HtmlPathElement<'_, Handle>,
     ) {
-        if self.matcher.context_match(path, element) {
+        if self.matcher.context_match(context, element) {
             return;
         }
         // TODO optimise when not hitting
-        let filtered_path = path
+        let filtered_path = context
             .iter()
             .filter(|element| !self.matcher.is_match(element))
             .cloned()
@@ -342,9 +365,9 @@ where
         self.inner.append_element(filtered_path.as_slice(), element);
     }
 
-    fn append_text(&mut self, path: HtmlContext<Handle>, text: &str) {
+    fn append_text(&mut self, context: HtmlContext<Handle>, text: &str) {
         // TODO optimise when not hitting
-        let filtered_path = path
+        let filtered_path = context
             .iter()
             .filter(|element| !self.matcher.is_match(element))
             .cloned()
@@ -374,16 +397,16 @@ impl<Handle: Copy + Eq, A: HtmlSink<Handle>, B: HtmlSink<Handle>> HtmlSink<Handl
 
     fn append_element(
         &mut self,
-        path: HtmlContext<'_, Handle>,
+        context: HtmlContext<'_, Handle>,
         element: &HtmlPathElement<'_, Handle>,
     ) {
-        self.0.append_element(path, element);
-        self.1.append_element(path, element);
+        self.0.append_element(context, element);
+        self.1.append_element(context, element);
     }
 
-    fn append_text(&mut self, path: HtmlContext<Handle>, text: &str) {
-        self.0.append_text(path, text);
-        self.1.append_text(path, text);
+    fn append_text(&mut self, context: HtmlContext<Handle>, text: &str) {
+        self.0.append_text(context, text);
+        self.1.append_text(context, text);
     }
 
     fn reset(&mut self) -> Self::Output {
