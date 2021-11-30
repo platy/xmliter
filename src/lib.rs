@@ -28,9 +28,15 @@ pub trait HtmlIterator {
         }
     }
 
-    // fn include(&self, selector: impl ContextualSelector) -> HtmlIter {
-    //     todo!()
-    // }
+    fn include<S: ContextualSelector>(self, selector: S) -> Include<Self, S>
+    where
+        Self: Sized,
+    {
+        Include {
+            inner: self,
+            selector,
+        }
+    }
 
     fn write_into(mut self, f: impl io::Write)
     where
@@ -97,6 +103,25 @@ impl<I: HtmlIterator, S: ContextualSelector> HtmlIterator for Exclude<I, S> {
     }
 }
 
+pub struct Include<I, S> {
+    inner: I,
+    selector: S,
+}
+
+impl<I: HtmlIterator, S: ContextualSelector> HtmlIterator for Include<I, S> {
+    fn advance(&mut self) {
+        while let Some(item) = self.inner.next() {
+            if let Some(_item) = item.include(&self.selector) {
+                return;
+            }
+        }
+    }
+
+    fn get(&self) -> Option<Item<'_>> {
+        self.inner.get().map(|i| i.include(&self.selector).unwrap())
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -125,10 +150,10 @@ mod test {
         );
     }
 
-    // #[test]
-    // fn select_element() {
-    //     let test = "<!DOCTYPE html><html><head></head><body><div id="main"><p><b>hello</b></p><p>world!</p></div><p>side</p></body></html>";
-    //     let out = HtmlIter::from_reader(test.as_bytes()).include(css_select!((#"main" "p"));
-    //     assert_eq!(&out.to_string(), "<p><b>hello</b></p><p>world!</p>");
-    // }
+    #[test]
+    fn select_element() {
+        let test = r#"<!DOCTYPE html><html><head></head><body><div id="main"><p><b>hello</b></p><p>world!</p></div><p>side</p></body></html>"#;
+        let out = HtmlIter::from_reader(test.as_bytes()).include(css_select!((#"main") ("p")));
+        assert_eq!(&out.to_string(), "<p><b>hello</b></p><p>world!</p>");
+    }
 }

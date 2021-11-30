@@ -5,6 +5,8 @@ use quick_xml::{
     Reader,
 };
 
+use crate::selector::ContextualSelector;
+
 pub(crate) struct Traverser {
     buf: Vec<u8>,
     path: ElementPathBuf,
@@ -249,12 +251,11 @@ pub struct Item<'a> {
 impl<'a> Item<'a> {
     pub fn as_element(&self) -> Option<Element<'a>> {
         match self.node {
-            Node::Start => self
+            Node::Start | Node::End => self
                 .context
                 .path
                 .last()
                 .map(|en| self.context.as_element(en)),
-            Node::End => todo!(),
             _ => None,
         }
     }
@@ -310,6 +311,29 @@ impl<'a> Item<'a> {
                 self.context.path.last().unwrap().name.clone().into_bytes(),
             )),
         }
+    }
+
+    pub(crate) fn include(self, selector: &dyn ContextualSelector) -> Option<Item<'a>> {
+        for start in 0..self.context.path.len() {
+            let item = Item {
+                context: ElementPath {
+                    path: &self.context.path[..=start],
+                    buf: self.context.buf,
+                },
+                node: Node::Start,
+            };
+            if selector.context_match(&item) {
+                let item = Item {
+                    context: ElementPath {
+                        path: &self.context.path[start..],
+                        buf: self.context.buf,
+                    },
+                    node: self.node.clone(),
+                };
+                return Some(item);
+            }
+        }
+        None
     }
 }
 
