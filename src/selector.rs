@@ -1,11 +1,9 @@
-use html5ever::{tendril::StrTendril, *};
-
-use crate::{HtmlContext, HtmlPathElement};
+use crate::iteritem::{Element, ElementPath, Item};
 
 /// Selects elements using a syntax similar to css 1 selectors, supporting css 1 selectors except pseudo-elements and pseudo classes
 ///
 /// ```
-/// use html5streams::css_select;
+/// use xmliter::css_select;
 ///
 /// css_select!("p");
 /// css_select!("p"."quote");
@@ -48,7 +46,7 @@ macro_rules! css_select {
 }
 
 pub trait Selector {
-    fn is_match<Handle>(&self, element: &HtmlPathElement<'_, Handle>) -> bool;
+    fn is_match(&self, element: &Element<'_>) -> bool;
 
     fn and<O: Selector>(self, other: O) -> AndSelector<Self, O>
     where
@@ -59,11 +57,17 @@ pub trait Selector {
 }
 
 pub trait ContextualSelector {
-    fn context_match<Handle>(
-        &self,
-        context: HtmlContext<'_, Handle>,
-        element: &HtmlPathElement<'_, Handle>,
-    ) -> bool;
+    fn context_match(&self, item: &Item<'_>) -> bool;
+
+    fn match_any(&self, mut context: ElementPath<'_>) -> bool {
+        while let Some(item) = context.as_item() {
+            if self.context_match(&item) {
+                return true;
+            }
+            context = item.into_context_path();
+        }
+        false
+    }
 
     fn or<O: ContextualSelector>(self, other: O) -> GroupSelector<Self, O>
     where
@@ -74,34 +78,31 @@ pub trait ContextualSelector {
 }
 
 pub trait OnlyContextualSelector {
-    fn context_match<Handle>(&self, context: HtmlContext<'_, Handle>) -> bool;
+    fn match_any(&self, context: ElementPath) -> bool;
 }
 
 impl<S> ContextualSelector for S
 where
     S: Selector,
 {
-    fn context_match<Handle>(
-        &self,
-        _context: HtmlContext<'_, Handle>,
-        element: &HtmlPathElement<'_, Handle>,
-    ) -> bool {
-        self.is_match(element)
+    fn context_match(&self, item: &Item<'_>) -> bool {
+        item.as_element()
+            .map_or(false, |element| self.is_match(&element))
     }
 }
 
 pub struct NameSelector(pub &'static str);
 
 impl Selector for NameSelector {
-    fn is_match<Handle>(&self, element: &HtmlPathElement<'_, Handle>) -> bool {
-        *self.0 == *element.name.local
+    fn is_match(&self, element: &Element<'_>) -> bool {
+        *self.0 == *element.name()
     }
 }
 
 pub struct ClassSelector(pub &'static str);
 
 impl Selector for ClassSelector {
-    fn is_match<Handle>(&self, element: &HtmlPathElement<'_, Handle>) -> bool {
+    fn is_match(&self, element: &Element<'_>) -> bool {
         element.classes().any(|class| class == self.0)
     }
 }
@@ -109,95 +110,31 @@ impl Selector for ClassSelector {
 pub struct IdSelector(pub &'static str);
 
 impl Selector for IdSelector {
-    fn is_match<Handle>(&self, element: &HtmlPathElement<'_, Handle>) -> bool {
-        const ID: QualName = QualName {
-            prefix: None,
-            ns: ns!(),
-            local: local_name!("id"),
-        };
-        if let Some(id) = element.attr(ID) {
-            let var_name: &str = &*id;
-            self.0 == var_name
-        } else {
-            false
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct ElementSelector {
-    name: Option<QualName>,
-    id: Option<StrTendril>,
-    classes: Vec<StrTendril>,
-}
-
-impl ElementSelector {
-    pub fn element_match<Handle>(&self, element: &HtmlPathElement<'_, Handle>) -> bool {
-        const ID: QualName = QualName {
-            prefix: None,
-            ns: ns!(),
-            local: local_name!("id"),
-        };
-        self.name
-            .as_ref()
-            .map_or(true, |match_name| *match_name == element.name)
-            && self.id.as_ref().map_or(true, |match_id| {
-                element.attr(ID).map_or(false, |id| match_id == id)
-            })
-            && self
-                .classes
-                .iter()
-                .all(|match_class| element.classes().any(|class| **match_class == *class))
-    }
-
-    pub fn class(self, class: StrTendril) -> Self {
-        let mut classes = self.classes;
-        classes.push(class);
-        Self {
-            name: self.name,
-            id: self.id,
-            classes,
-        }
-    }
-
-    pub fn name(self, local_name: LocalName) -> Self {
-        Self {
-            name: Some(QualName {
-                prefix: None,
-                ns: ns!(html),
-                local: local_name,
-            }),
-            id: self.id,
-            classes: self.classes,
-        }
-    }
-}
-
-impl Selector for ElementSelector {
-    fn is_match<Handle>(&self, element: &HtmlPathElement<'_, Handle>) -> bool {
-        self.element_match(element)
+    fn is_match(&self, element: &Element<'_>) -> bool {
+        element
+            .attributes()
+            .any(|attr| attr.name == "id" && attr.value == self.0)
     }
 }
 
 /// A contextual selector, the last selector must match the element exactly and the preceding must match elements in the context in that order
 impl<S: Selector> ContextualSelector for [S] {
-    fn context_match<Handle>(
-        &self,
-        path: HtmlContext<'_, Handle>,
-        element: &HtmlPathElement<'_, Handle>,
-    ) -> bool {
+    fn context_match(&self, item: &Item<'_>) -> bool {
         let mut to_match = self.iter().rev();
         if let Some(end_matcher) = to_match.next() {
-            if !end_matcher.is_match(element) {
+            if !item
+                .as_element()
+                .map_or(false, |element| end_matcher.is_match(&element))
+            {
                 return false;
             }
         } else {
             return true;
         }
-        let mut path = path.iter().rev();
+        let mut path = item.context_path().into_iter().rev();
         'outer: for matcher in to_match {
             for element in &mut path {
-                if matcher.is_match(element) {
+                if matcher.is_match(&element) {
                     continue 'outer;
                 }
             }
@@ -211,13 +148,13 @@ impl<S: Selector> ContextualSelector for [S] {
 pub struct MatchAll;
 
 impl Selector for MatchAll {
-    fn is_match<Handle>(&self, _element: &HtmlPathElement<'_, Handle>) -> bool {
+    fn is_match(&self, _element: &Element<'_>) -> bool {
         true
     }
 }
 
 impl OnlyContextualSelector for MatchAll {
-    fn context_match<Handle>(&self, _context: HtmlContext<'_, Handle>) -> bool {
+    fn match_any(&self, _context: ElementPath<'_>) -> bool {
         true
     }
 }
@@ -226,13 +163,13 @@ impl OnlyContextualSelector for MatchAll {
 pub struct ContextSelectCons<C, A>(pub C, pub A);
 
 impl<C: OnlyContextualSelector, A: Selector> OnlyContextualSelector for ContextSelectCons<C, A> {
-    fn context_match<Handle>(&self, mut context: HtmlContext<'_, Handle>) -> bool {
+    fn match_any(&self, mut context: ElementPath<'_>) -> bool {
         while let Some((last, rest)) = context.split_last() {
             let element = last;
-            context = rest;
-            if self.1.is_match(element) {
-                return self.0.context_match(context);
+            if self.1.is_match(&element) {
+                return self.0.match_any(rest);
             }
+            context = rest;
         }
         false
     }
@@ -242,12 +179,10 @@ impl<C: OnlyContextualSelector, A: Selector> OnlyContextualSelector for ContextS
 pub struct ContextualSelectCons<C: OnlyContextualSelector, A: Selector>(pub C, pub A);
 
 impl<C: OnlyContextualSelector, A: Selector> ContextualSelector for ContextualSelectCons<C, A> {
-    fn context_match<'a, Handle>(
-        &self,
-        context: HtmlContext<'a, Handle>,
-        element: &'a HtmlPathElement<'a, Handle>,
-    ) -> bool {
-        self.1.is_match(element) && self.0.context_match(context)
+    fn context_match<'a>(&self, item: &Item<'a>) -> bool {
+        item.as_element()
+            .map_or(false, |element| self.1.is_match(&element))
+            && self.0.match_any(item.as_path())
     }
 }
 
@@ -255,12 +190,8 @@ impl<C: OnlyContextualSelector, A: Selector> ContextualSelector for ContextualSe
 pub struct GroupSelector<A: ContextualSelector, B: ContextualSelector>(A, B);
 
 impl<A: ContextualSelector, B: ContextualSelector> ContextualSelector for GroupSelector<A, B> {
-    fn context_match<Handle>(
-        &self,
-        path: HtmlContext<'_, Handle>,
-        element: &HtmlPathElement<'_, Handle>,
-    ) -> bool {
-        self.0.context_match(path, element) || self.1.context_match(path, element)
+    fn context_match(&self, item: &Item<'_>) -> bool {
+        self.0.context_match(item) || self.1.context_match(item)
     }
 }
 
@@ -268,75 +199,49 @@ impl<A: ContextualSelector, B: ContextualSelector> ContextualSelector for GroupS
 pub struct AndSelector<A: Selector, B: Selector>(A, B);
 
 impl<A: Selector, B: Selector> Selector for AndSelector<A, B> {
-    fn is_match<Handle>(&self, element: &HtmlPathElement<'_, Handle>) -> bool {
+    fn is_match(&self, element: &Element<'_>) -> bool {
         self.0.is_match(element) && self.1.is_match(element)
     }
 }
 
 #[test]
 fn test_matchers() {
-    let mut handle = 0;
-    let mut el = |local, attrs: Vec<Attribute>| {
-        handle += 1;
-        HtmlPathElement {
-            handle,
-            name: QualName {
-                prefix: None,
-                ns: ns!(html),
-                local,
-            },
-            attrs: attrs.into(),
-        }
-    };
-    let attr = |local, value: &str| Attribute {
-        name: QualName {
-            prefix: None,
-            ns: ns!(),
-            local,
-        },
-        value: value.into(),
-    };
-    let el_main = el(local_name!("div"), vec![attr(local_name!("id"), "main")]);
-    let el_p = el(local_name!("p"), vec![]);
-    let el_quote = el(
-        local_name!("p"),
-        vec![Attribute {
-            name: QualName {
-                prefix: None,
-                ns: ns!(),
-                local: local_name!("class"),
-            },
-            value: "fixed quote".into(),
-        }],
+    let mut path_body = crate::iteritem::ElementPathBuf::new();
+    path_body
+        .append_element("html", vec![])
+        .append_element("body", vec![]);
+    let mut path_main = path_body.clone();
+    path_main.append_element("div", vec![("id", "main")]);
+    let mut main_p = path_main.clone();
+    main_p.append_element("p", vec![]);
+    let mut main_quote = path_main.clone();
+    main_quote.append_element("p", vec![("class", "fixed quote")]);
+    let mut body_quote = path_body.clone();
+    body_quote.append_element("p", vec![("class", "fixed quote")]);
+
+    assert!(css_select!("p").context_match(&main_p.as_path().as_item().unwrap()));
+    assert!(css_select!("p").context_match(&main_quote.as_path().as_item().unwrap()));
+    assert!(!css_select!("p").context_match(&path_main.as_path().as_item().unwrap()));
+
+    assert!(!css_select!("p"."quote").context_match(&main_p.as_path().as_item().unwrap()));
+    assert!(css_select!("p"."quote").context_match(&main_quote.as_path().as_item().unwrap()));
+    assert!(!css_select!("p"."quote").context_match(&path_main.as_path().as_item().unwrap()));
+
+    assert!(!css_select!(."quote").context_match(&main_p.as_path().as_item().unwrap()));
+    assert!(css_select!(."quote").context_match(&main_quote.as_path().as_item().unwrap()));
+    assert!(!css_select!(."quote").context_match(&path_main.as_path().as_item().unwrap()));
+
+    assert!(!css_select!(#"main").context_match(&main_p.as_path().as_item().unwrap()));
+    assert!(!css_select!(#"main").context_match(&main_quote.as_path().as_item().unwrap()));
+    assert!(css_select!(#"main").context_match(&path_main.as_path().as_item().unwrap()));
+
+    assert!(
+        !css_select!((#"main") ("p"."quote")).context_match(&main_p.as_path().as_item().unwrap())
     );
-    let path_body = [
-        el(local_name!("html"), vec![]),
-        el(local_name!("html"), vec![]),
-    ];
-    let path_main = [
-        el(local_name!("html"), vec![]),
-        el(local_name!("html"), vec![]),
-        el_main.clone(),
-    ];
-
-    assert!(css_select!("p").context_match(&path_main, &el_p));
-    assert!(css_select!("p").context_match(&path_main, &el_quote));
-    assert!(!css_select!("p").context_match(&path_body, &el_main));
-
-    assert!(!css_select!("p"."quote").context_match(&path_main, &el_p));
-    assert!(css_select!("p"."quote").context_match(&path_main, &el_quote));
-    assert!(!css_select!("p"."quote").context_match(&path_body, &el_main));
-
-    assert!(!css_select!(."quote").context_match(&path_main, &el_p));
-    assert!(css_select!(."quote").context_match(&path_main, &el_quote));
-    assert!(!css_select!(."quote").context_match(&path_body, &el_main));
-
-    assert!(!css_select!(#"main").context_match(&path_main, &el_p));
-    assert!(!css_select!(#"main").context_match(&path_main, &el_quote));
-    assert!(css_select!(#"main").context_match(&path_body, &el_main));
-
-    assert!(!css_select!((#"main") ("p"."quote")).context_match(&path_main, &el_p));
-    assert!(css_select!((#"main") ("p"."quote")).context_match(&path_main, &el_quote));
-    assert!(!css_select!((#"main") ("p"."quote")).context_match(&path_body, &el_main));
-    assert!(!css_select!((#"main") ("p"."quote")).context_match(&path_body, &el_quote));
+    assert!(css_select!((#"main") ("p"."quote"))
+        .context_match(&main_quote.as_path().as_item().unwrap()));
+    assert!(!css_select!((#"main") ("p"."quote"))
+        .context_match(&path_main.as_path().as_item().unwrap()));
+    assert!(!css_select!((#"main") ("p"."quote"))
+        .context_match(&body_quote.as_path().as_item().unwrap()));
 }
