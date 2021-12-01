@@ -283,7 +283,7 @@ impl<'a> Item<'a> {
     }
 
     /// The element path, including the element itself if it is one
-    pub(crate) fn as_path(&self) -> ElementPath {
+    pub fn as_path(&self) -> ElementPath {
         self.context
     }
 
@@ -313,7 +313,7 @@ impl<'a> Item<'a> {
         }
     }
 
-    pub(crate) fn include(self, selector: &dyn ContextualSelector) -> Option<Item<'a>> {
+    pub fn include(self, selector: &dyn ContextualSelector) -> Option<Item<'a>> {
         for start in 0..self.context.path.len() {
             let item = Item {
                 context: ElementPath {

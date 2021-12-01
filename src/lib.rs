@@ -42,9 +42,9 @@ pub trait HtmlIterator {
     where
         Self: Sized,
     {
-        let mut writer = quick_xml::Writer::new(f);
+        let mut writer = HtmlWriter::from_writer(f);
         while let Some(item) = self.next() {
-            assert!(writer.write_event(&item.as_event()).is_ok());
+            writer.write_item(item)
         }
     }
 
@@ -55,6 +55,22 @@ pub trait HtmlIterator {
         let mut buf = vec![];
         self.write_into(Cursor::new(&mut buf));
         String::from_utf8(buf).unwrap()
+    }
+}
+
+pub struct HtmlWriter<W: io::Write> {
+    inner: quick_xml::Writer<W>,
+}
+
+impl<W: io::Write> HtmlWriter<W> {
+    pub fn from_writer(writer: W) -> Self {
+        Self {
+            inner: quick_xml::Writer::new(writer),
+        }
+    }
+
+    pub fn write_item(&mut self, item: Item) {
+        self.inner.write_event(&item.as_event()).unwrap();
     }
 }
 

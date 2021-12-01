@@ -75,13 +75,13 @@ For simple examples you can use the chaining methods, but they obfuscate how a m
 ### Remove everything except the main element
 
 ```rust
-write!(&mut write, "{}", HtmlIter::from(read).include(css_selector!("main")));
+write!(&mut write, "{}", HtmlIter::from_reader(read).include(css_select!("main")));
 ```
 
 ```rust
-let mut iter = HtmlIter::from(read);
+let mut iter = HtmlIter::from_reader(read);
 while let Some(item) = iter.next() {
-    if let Some(under_main) = item.include(css_selector!("main")) { // anything without main in the path is ignored, and any context with main is stripped before the main
+    if let Some(under_main) = item.include(css_select!("main")) { // anything without main in the path is ignored, and any context with main is stripped before the main
         write!(&mut write, "{}", under_main)?
     }
 }
@@ -90,13 +90,13 @@ while let Some(item) = iter.next() {
 ### Remove everything with the class "bloat" under "main"
 
 ```rust
-write!(&mut write, "{}", HtmlIter::from(read).exclude(css_selector!(("main") (."bloat"))));
+write!(&mut write, "{}", HtmlIter::from_reader(read).exclude(css_select!(("main") (."bloat"))));
 ```
 
 ```rust
-let mut iter = HtmlIter::from(read);
+let mut iter = HtmlIter::from_reader(read);
 while let Some(item) = iter.next() {
-    if !item.match_any(css_selector!(("main") (."bloat"))) { // if nothing in the item's path matches
+    if !item.match_any(css_select!(("main") (."bloat"))) { // if nothing in the item's path matches
         write!(&mut write, "{}", item)?
     }
 }
@@ -105,13 +105,13 @@ while let Some(item) = iter.next() {
 ### Remove all the `id`s from the document
 
 ```rust
-write!(&mut write, "{}", HtmlIter::from(read).map_all(|element| // on the iterator, `map_all` means that this mapping applies to every element in the document
+write!(&mut write, "{}", HtmlIter::from_reader(read).map_all(|element| // on the iterator, `map_all` means that this mapping applies to every element in the document
     element.map_attributes(|attributes| // to map the element, we map the attributes, meaning no allocations need to take place, and any elements later ignored don't actually need to be processed
         attributes.filter(|name, _value|name != "id")))); // the attributes are a regular `std::iter::Iterator`
 ```
 
 ```rust
-let mut iter = HtmlIter::from(read);
+let mut iter = HtmlIter::from_reader(read);
 while let Some(item) = iter.next() {
     let item = item.map_all(|element| // on the item, `map_all` means this mapping applies to every element in the path
         element.map_attributes(|attributes|
@@ -123,7 +123,7 @@ while let Some(item) = iter.next() {
 ### Extract all hyperlinks
 
 ```rust
-let links: Vec<_> = HtmlIter::from(read).filter_map(|item| (item.name == "a").then(|| item.attr("href"))).collect(); // methods on the iterator which are identically named to those on `std::iter::Iterator` work in the expected way.
+let links: Vec<_> = HtmlIter::from_reader(read).filter_map(|item| (item.name == "a").then(|| item.attr("href"))).collect(); // methods on the iterator which are identically named to those on `std::iter::Iterator` work in the expected way.
 ```
 
 ### Extract books expressed in RDFa
@@ -137,7 +137,7 @@ struct Book {
     author: Option<String>
 }
 
-let books = HtmlIter::from(read)
+let books = HtmlIter::from_reader(read)
     // `group_under` gives us an item at this level for each mach in the document
     .group_under(css_select!((["vocab"="https://schema.org/"] ["typeof"="Book"])))
     // `filter_map` returns a regular iterator over `Book`
