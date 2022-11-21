@@ -62,11 +62,17 @@ It's going to be diffing 2 different streams from 2 different threads, so maybe 
 
 # htmliter
 
-Provides an iterator api for iterating over elements (and their context path) in html or xml documents. This can be used to perform transformations or extractions on documents without loading them into memory.
+Provides an streaming iterator api for iterating over elements (and their context path) in html or xml documents. This can be used to perform transformations or extractions on documents without loading them into memory.
 
-The iterated item is a reference to a trait object which allows borrowing an xml/html item (element, text, cdata, ...) and all of it's ancestor elements. As the item is borrowed, it can't currently implement [`std::iter::Iterator`], but if borrow support is added to `Iterator` in the future, that will be added here and this could be used with for loops.
+The iterated item is a reference to a trait object which allows borrowing an xml/html item (element, text, cdata, ...) and all of it's ancestor elements.
 
 The iterator chaining methods on `std::iter::Iterator` and the collectors which implement [`std::iter::FromIterator`] wouldn't be generally useful for iterating over these paths, so here we provide some iterator chaining methods and collectors, these would allow terse solutions for simple cases and pre-processing, but in more complex cases you are likely to be need to use `while let Some(item) = iter.next() {...}`.
+
+## Issues to resolve
+
+- [ ] Update readme
+- [ ] Node::Text can't allocate a string
+- [ ] Maybe this can implement [streaming-iterator](https://lib.rs/crates/streaming-iterator)
 
 ## Examples
 
@@ -123,7 +129,7 @@ while let Some(item) = iter.next() {
 ### Extract all hyperlinks
 
 ```rust
-let links: Vec<_> = HtmlIter::from_reader(read).filter_map(|item| (item.name == "a").then(|| item.attr("href"))).collect(); // methods on the iterator which are identically named to those on `std::iter::Iterator` work in the expected way.
+let links: Vec<_> = HtmlIter::from_reader(read).filter_map(|item| (item.name == "a").then(|| item.attr("href"))).collect(); // methods on the iterator which are identically named to those on `std::iter::Iterator` work in the expected way, returning an `std::iter::Iterator`.
 ```
 
 ### Extract books expressed in RDFa
@@ -138,7 +144,7 @@ struct Book {
 }
 
 let books = HtmlIter::from_reader(read)
-    // `group_under` gives us an item at this level for each mach in the document
+    // `group_under` gives us an item at this level for each match in the document
     .group_under(css_select!((["vocab"="https://schema.org/"] ["typeof"="Book"])))
     // `filter_map` returns a regular iterator over `Book`
     .filter_map(|book| {
