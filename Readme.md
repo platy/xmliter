@@ -115,7 +115,7 @@ let mut iter = HtmlIter::from_reader(read);
 while let Some(item) = iter.next() {
     let item = item.map_all(|element| // on the item, `map_all` means this mapping applies to every element in the path
         element.map_attributes(|attributes|
-            attributes.filter(|name, _value|name != "id"))));
+            attributes.filter(|name, _value|name != "id")));
     write!(&mut write, "{}", item)?
 }
 ```
