@@ -6,9 +6,9 @@ pub mod selector;
 
 pub use itemext::{IncludeItem, ItemExt};
 pub use iteritem::{Element, Item, RawElement, RawItem};
+pub use selector::ContextualSelector;
 
 use iteritem::Traverser;
-use selector::ContextualSelector;
 
 pub trait HtmlIterator {
     type Item<'a>: Item<'a>

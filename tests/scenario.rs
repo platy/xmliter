@@ -1,9 +1,6 @@
 use std::io::{BufReader, Cursor};
 
-use xmliter::{
-    css_select, selector::ContextualSelector, Element, HtmlIter, HtmlIterator, HtmlWriter, Item,
-    ItemExt, RawElement,
-};
+use xmliter::*;
 
 #[test]
 fn include_chain() {
