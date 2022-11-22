@@ -91,8 +91,8 @@ fn exclude_for() {
 //     let mut out = Vec::new();
 //     let mut writer = HtmlWriter::from_writer(&mut out);
 //     while let Some(item) = iter.next() {
-//         let item = item.map_all(
-//             |element: &RawElement| // on the item, `map_all` means this mapping applies to every element in the path
+//         let item = item.map_all::<RawElement, _, _>(
+//             |element| // on the item, `map_all` means this mapping applies to every element in the path
 //             element.filter_attributes(|name, _value| name != "id"),
 //         );
 //         writer.write_item(&item);

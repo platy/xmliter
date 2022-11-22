@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 
 mod element;
@@ -120,7 +122,7 @@ pub trait Item<'a> {
         }
     }
 
-    fn map_all<F, E1, E2>(self, map: F) -> MappedItem<Self, F>
+    fn map_all<E1, E2, F>(self, map: F) -> MappedItem<'a, Self, E1, E2, F>
     where
         E1: Element,
         E2: Element,
@@ -130,6 +132,7 @@ pub trait Item<'a> {
         MappedItem {
             inner: self,
             _map: map,
+            _phantom: PhantomData::default(),
         }
     }
 }
@@ -156,15 +159,26 @@ impl<'a> Item<'a> for RawItem<'a> {
     }
 }
 
-pub struct MappedItem<I, F> {
-    _map: F,
-    inner: I,
-}
-
-impl<'a, I, F> Item<'a> for MappedItem<I, F>
+/// Maps each element in the path, the node type itself is unchanged
+pub struct MappedItem<'a, I, E1, E2, F>
 where
     I: Item<'a>,
-    F: Fn(RawElement) -> RawElement,
+    E1: Element,
+    E2: Element,
+    F: Fn(&'a E1) -> E2,
+    Self: Sized,
+{
+    _map: F,
+    inner: I,
+    _phantom: PhantomData<&'a (E1, E2)>,
+}
+
+impl<'a, I, E1, E2, F> Item<'a> for MappedItem<'a, I, E1, E2, F>
+where
+    I: Item<'a>,
+    E1: Element,
+    E2: Element,
+    F: Fn(&E1) -> E2,
 {
     fn node(&self) -> &Node {
         self.inner.node()

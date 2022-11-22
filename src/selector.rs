@@ -14,7 +14,7 @@ use crate::iteritem::{Element, ElementPath, Item};
 #[macro_export]
 macro_rules! css_select {
     (@inner [($($head:tt)+)] -> [$selector:expr]) => {
-        ($crate::selector::ContextualSelectCons($selector , css_select!($($head)+)))
+        $crate::selector::ContextualSelectCons($selector , css_select!($($head)+))
     };
     (@inner [($($head:tt)+) $($tail:tt)*] -> [$selector:expr]) => {
         css_select!(@inner [$($tail)*] -> [$crate::selector::ContextSelectCons($selector , css_select!($($head)+))])
