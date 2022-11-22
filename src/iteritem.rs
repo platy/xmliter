@@ -1,11 +1,9 @@
-use std::{fmt, io::BufRead, mem};
+use std::{fmt, io::BufRead, mem, slice::SliceIndex};
 
 use quick_xml::{
     events::{BytesEnd, BytesStart, BytesText, Event},
     Reader,
 };
-
-use crate::selector::ContextualSelector;
 
 pub(crate) struct Traverser {
     buf: Vec<u8>,
@@ -56,8 +54,8 @@ impl Traverser {
         }
     }
 
-    pub fn get(&self) -> Option<Item> {
-        self.current.as_ref().map(|node| Item {
+    pub fn get(&self) -> Option<RawItem> {
+        self.current.as_ref().map(|node| RawItem {
             context: self.path.as_path(),
             node: node.clone(),
         })
@@ -137,10 +135,14 @@ pub struct ElementPath<'a> {
 }
 
 impl<'a> ElementPath<'a> {
-    pub(crate) fn split_last(&self) -> Option<(Element<'a>, ElementPath<'a>)> {
+    pub fn len(&self) -> usize {
+        self.path.len()
+    }
+
+    pub(crate) fn split_last(&self) -> Option<(RawElement<'a>, ElementPath<'a>)> {
         if let Some((element, path)) = self.path.split_last() {
             Some((
-                Element {
+                RawElement {
                     element,
                     _buf: self.buf,
                 },
@@ -154,9 +156,9 @@ impl<'a> ElementPath<'a> {
         }
     }
 
-    pub(crate) fn as_item(&self) -> Option<Item<'a>> {
+    pub(crate) fn as_item(&self) -> Option<RawItem<'a>> {
         if !self.path.is_empty() {
-            Some(Item {
+            Some(RawItem {
                 context: *self,
                 node: Node::Start,
             })
@@ -165,10 +167,20 @@ impl<'a> ElementPath<'a> {
         }
     }
 
-    fn as_element(&self, first: &'a NormalisedElement) -> Element<'a> {
-        Element {
+    fn as_element(&self, first: &'a NormalisedElement) -> RawElement<'a> {
+        RawElement {
             element: first,
             _buf: self.buf,
+        }
+    }
+
+    pub(crate) fn slice<I: SliceIndex<[NormalisedElement], Output = [NormalisedElement]>>(
+        &self,
+        index: I,
+    ) -> Self {
+        Self {
+            path: &self.path[index],
+            buf: self.buf,
         }
     }
 }
@@ -183,7 +195,7 @@ impl<'a> fmt::Debug for ElementPath<'a> {
 }
 
 impl<'a> IntoIterator for ElementPath<'a> {
-    type Item = Element<'a>;
+    type Item = RawElement<'a>;
 
     type IntoIter = ElementPathIter<'a>;
 
@@ -195,7 +207,7 @@ impl<'a> IntoIterator for ElementPath<'a> {
 pub struct ElementPathIter<'a>(ElementPath<'a>);
 
 impl<'a> Iterator for ElementPathIter<'a> {
-    type Item = Element<'a>;
+    type Item = RawElement<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some((first, rest)) = self.0.path.split_first() {
@@ -220,7 +232,7 @@ impl<'a> DoubleEndedIterator for ElementPathIter<'a> {
 
 /// Currently Heap allocated, but to be fixed size with no references, instead should only contain slice index ranges into vecs stored on element paths
 #[derive(Clone)]
-struct NormalisedElement {
+pub(crate) struct NormalisedElement {
     name: String,
     attrs: Vec<NormalisedAttribute>,
 }
@@ -243,13 +255,13 @@ pub(crate) struct NormalisedAttribute {
 }
 
 /// An item in the traversal, with access to the current node and the context of elements
-pub struct Item<'a> {
-    context: ElementPath<'a>,
-    node: Node,
+pub struct RawItem<'a> {
+    pub(crate) context: ElementPath<'a>,
+    pub(crate) node: Node,
 }
 
-impl<'a> Item<'a> {
-    pub fn as_element(&self) -> Option<Element<'a>> {
+impl<'a> Item<'a> for RawItem<'a> {
+    fn as_element(&self) -> Option<RawElement<'a>> {
         match self.node {
             Node::Start | Node::End => self
                 .context
@@ -260,37 +272,40 @@ impl<'a> Item<'a> {
         }
     }
 
-    /// The element path, not including the potential current element
-    pub(crate) fn into_context_path(self) -> ElementPath<'a> {
-        match self.node {
-            Node::Start | Node::End => ElementPath {
-                path: &self.context.path[0..(self.context.path.len() - 1)],
-                buf: self.context.buf,
-            },
-            _ => self.context,
-        }
-    }
-
-    /// The element path, not including the potential current element
-    pub(crate) fn context_path(&self) -> ElementPath<'_> {
-        match self.node {
-            Node::Start | Node::End => ElementPath {
-                path: &self.context.path[0..(self.context.path.len() - 1)],
-                buf: self.context.buf,
-            },
-            _ => self.context,
-        }
-    }
-
     /// The element path, including the element itself if it is one
-    pub fn as_path(&self) -> ElementPath {
+    fn as_path(&self) -> ElementPath<'a> {
         self.context
     }
 
-    pub fn as_event(&self) -> Event<'static> {
+    fn node(&self) -> &Node {
+        &self.node
+    }
+}
+
+impl<'a> std::fmt::Debug for RawItem<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}/{:?}", self.context, self.node)
+    }
+}
+
+pub trait Item<'a> {
+    fn node(&self) -> &Node;
+
+    fn as_element(&self) -> Option<RawElement<'a>>;
+
+    // /// The element path, not including the potential current element
+    // pub(crate) fn into_context_path(self) -> ElementPath<'a>;
+
+    // /// The element path, not including the potential current element
+    // pub(crate) fn context_path(&self) -> ElementPath<'_>;
+
+    /// The element path, including the element itself if it is one
+    fn as_path(&self) -> ElementPath<'a>;
+
+    fn as_event(&self) -> Event<'static> {
         use std::fmt::Write;
 
-        match self.node {
+        match self.node() {
             Node::Text(ref unescaped) => {
                 let bytes_text = BytesText::from_escaped_str(unescaped).into_owned();
                 Event::Text(bytes_text)
@@ -299,7 +314,7 @@ impl<'a> Item<'a> {
                 Event::DocType(BytesText::from_escaped_str(text).into_owned())
             }
             Node::Start => {
-                let element = self.context.path.last().unwrap();
+                let element = self.as_path().path.last().unwrap();
                 let mut s = element.name.clone();
                 let name_len = s.len();
                 for NormalisedAttribute { name, value } in &element.attrs {
@@ -308,44 +323,68 @@ impl<'a> Item<'a> {
                 Event::Start(BytesStart::owned(s, name_len))
             }
             Node::End => Event::End(BytesEnd::owned(
-                self.context.path.last().unwrap().name.clone().into_bytes(),
+                self.as_path()
+                    .path
+                    .last()
+                    .unwrap()
+                    .name
+                    .clone()
+                    .into_bytes(),
             )),
         }
     }
 
-    pub fn include(self, selector: &dyn ContextualSelector) -> Option<Item<'a>> {
-        for start in 0..self.context.path.len() {
-            let item = Item {
-                context: ElementPath {
-                    path: &self.context.path[..=start],
-                    buf: self.context.buf,
-                },
-                node: Node::Start,
-            };
-            if selector.context_match(&item) {
-                let item = Item {
-                    context: ElementPath {
-                        path: &self.context.path[start..],
-                        buf: self.context.buf,
-                    },
-                    node: self.node.clone(),
-                };
-                return Some(item);
+    /// The element path, not including the potential current element
+    fn context_path(&self) -> ElementPath<'a> {
+        match self.node() {
+            Node::Start | Node::End => {
+                let path = self.as_path();
+                path.slice(0..(path.path.len() - 1))
             }
+            _ => self.as_path(),
         }
-        None
+    }
+
+    fn map_all<F, E1, E2>(self, map: F) -> MappedItem<Self, F>
+    where
+        E1: Element,
+        E2: Element,
+        F: Fn(&E1) -> E2,
+        Self: Sized,
+    {
+        MappedItem {
+            inner: self,
+            _map: map,
+        }
     }
 }
 
-impl<'a> std::fmt::Debug for Item<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}/{:?}", self.context, self.node)
+pub struct MappedItem<I, F> {
+    _map: F,
+    inner: I,
+}
+
+impl<'a, I, F> Item<'a> for MappedItem<I, F>
+where
+    I: Item<'a>,
+    F: Fn(RawElement) -> RawElement,
+{
+    fn node(&self) -> &Node {
+        self.inner.node()
+    }
+
+    fn as_element(&self) -> Option<RawElement<'a>> {
+        todo!("Element also needs to be a trait")
+    }
+
+    fn as_path(&self) -> ElementPath<'a> {
+        todo!("ElementPath should be a trait")
     }
 }
 
-// should index elements and unescaped text in the path
+// should index elements and unescaped text in the path. Wanted it to be private, maybe it still can be
 #[derive(Clone)]
-enum Node {
+pub enum Node {
     DocType(String),
     Start,
     End,
@@ -364,34 +403,52 @@ impl fmt::Debug for Node {
 }
 
 /// An element in the context
-pub struct Element<'a> {
+pub struct RawElement<'a> {
     element: &'a NormalisedElement,
     _buf: &'a ElementPathBuf,
 }
 
-impl<'a> Element<'a> {
-    pub(crate) fn name(&self) -> &str {
-        &self.element.name
-    }
-
+impl<'a> RawElement<'a> {
     pub(crate) fn attributes(&self) -> std::slice::Iter<'_, NormalisedAttribute> {
         self.element.attrs.iter()
     }
+}
 
-    pub fn attr(&self, search: &str) -> Option<&str> {
+pub trait Element {
+    fn name(&self) -> &str;
+
+    fn attr(&self, search: &str) -> Option<&str>;
+
+    fn classes(&self) -> Classes {
+        match self.attr("class") {
+            Some(s) => Classes { s },
+            None => Classes { s: "" },
+        }
+    }
+
+    fn filter_attributes<F>(&self, predicate: F) -> FilterAttributes<Self, F>
+    where
+        F: Fn(&str, &str) -> bool,
+    {
+        FilterAttributes {
+            inner: self,
+            predicate,
+        }
+    }
+}
+
+impl<'a> Element for RawElement<'a> {
+    fn name(&self) -> &str {
+        &self.element.name
+    }
+
+    fn attr(&self, search: &str) -> Option<&str> {
         for NormalisedAttribute { name, value } in self.attributes() {
             if name == search {
                 return Some(value);
             }
         }
         None
-    }
-
-    pub fn classes(&self) -> Classes {
-        match self.attr("class") {
-            Some(s) => Classes { s },
-            None => Classes { s: "" },
-        }
     }
 }
 
@@ -411,5 +468,26 @@ impl<'a> Iterator for Classes<'a> {
         } else {
             None
         }
+    }
+}
+
+pub struct FilterAttributes<'i, I: ?Sized, P: Fn(&str, &str) -> bool> {
+    inner: &'i I,
+    predicate: P,
+}
+
+impl<'i, I, P> Element for FilterAttributes<'i, I, P>
+where
+    I: Element + ?Sized,
+    P: Fn(&str, &str) -> bool,
+{
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn attr(&self, search: &str) -> Option<&str> {
+        self.inner
+            .attr(search)
+            .and_then(|value| (self.predicate)(search, value).then_some(value))
     }
 }

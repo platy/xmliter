@@ -1,22 +1,28 @@
 use std::io::{self, BufRead, Cursor};
 
+mod itemext;
 mod iteritem;
 pub mod selector;
 
-use iteritem::{Item, Traverser};
+pub use itemext::{IncludeItem, ItemExt};
+pub use iteritem::{Element, Item, RawElement, RawItem};
+
+use iteritem::Traverser;
 use selector::ContextualSelector;
 
-pub struct HtmlItem {}
-
 pub trait HtmlIterator {
-    fn next(&mut self) -> Option<Item<'_>> {
+    type Item<'a>: Item<'a>
+    where
+        Self: 'a;
+
+    fn next(&mut self) -> Option<Self::Item<'_>> {
         self.advance();
         self.get()
     }
 
     fn advance(&mut self);
 
-    fn get(&self) -> Option<Item<'_>>;
+    fn get(&self) -> Option<Self::Item<'_>>;
 
     fn exclude<S: ContextualSelector>(self, selector: S) -> Exclude<Self, S>
     where
@@ -44,7 +50,7 @@ pub trait HtmlIterator {
     {
         let mut writer = HtmlWriter::from_writer(f);
         while let Some(item) = self.next() {
-            writer.write_item(item)
+            writer.write_item(&item)
         }
     }
 
@@ -69,7 +75,7 @@ impl<W: io::Write> HtmlWriter<W> {
         }
     }
 
-    pub fn write_item(&mut self, item: Item) {
+    pub fn write_item(&mut self, item: &dyn Item) {
         self.inner.write_event(&item.as_event()).unwrap();
     }
 }
@@ -89,10 +95,14 @@ impl<B: BufRead> HtmlIter<B> {
 }
 
 impl<B: io::BufRead> HtmlIterator for HtmlIter<B> {
+    type Item<'a> = RawItem<'a>
+    where
+        Self: 'a;
+
     fn advance(&mut self) {
         self.buf.read_from(&mut self.reader)
     }
-    fn get(&self) -> Option<Item<'_>> {
+    fn get(&self) -> Option<Self::Item<'_>> {
         self.buf.get()
     }
 }
@@ -103,6 +113,10 @@ pub struct Exclude<I, S> {
 }
 
 impl<I: HtmlIterator, S: ContextualSelector> HtmlIterator for Exclude<I, S> {
+    type Item<'a> = I::Item<'a>
+    where
+        Self: 'a;
+
     fn advance(&mut self) {
         while let Some(item) = self.inner.next() {
             if !self.selector.match_any(item.as_path()) {
@@ -114,7 +128,7 @@ impl<I: HtmlIterator, S: ContextualSelector> HtmlIterator for Exclude<I, S> {
         }
     }
 
-    fn get(&self) -> Option<Item<'_>> {
+    fn get(&self) -> Option<Self::Item<'_>> {
         self.inner.get()
     }
 }
@@ -125,6 +139,10 @@ pub struct Include<I, S> {
 }
 
 impl<I: HtmlIterator, S: ContextualSelector> HtmlIterator for Include<I, S> {
+    type Item<'a> = IncludeItem<I::Item<'a>>
+    where
+        Self: 'a,;
+
     fn advance(&mut self) {
         while let Some(item) = self.inner.next() {
             if let Some(_item) = item.include(&self.selector) {
@@ -133,7 +151,7 @@ impl<I: HtmlIterator, S: ContextualSelector> HtmlIterator for Include<I, S> {
         }
     }
 
-    fn get(&self) -> Option<Item<'_>> {
+    fn get(&self) -> Option<Self::Item<'_>> {
         self.inner.get().map(|i| i.include(&self.selector).unwrap())
     }
 }

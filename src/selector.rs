@@ -46,7 +46,7 @@ macro_rules! css_select {
 }
 
 pub trait Selector {
-    fn is_match(&self, element: &Element<'_>) -> bool;
+    fn is_match(&self, element: &impl Element) -> bool;
 
     fn and<O: Selector>(self, other: O) -> AndSelector<Self, O>
     where
@@ -57,14 +57,14 @@ pub trait Selector {
 }
 
 pub trait ContextualSelector {
-    fn context_match(&self, item: &Item<'_>) -> bool;
+    fn context_match(&self, item: &dyn Item<'_>) -> bool;
 
     fn match_any(&self, mut context: ElementPath<'_>) -> bool {
         while let Some(item) = context.as_item() {
             if self.context_match(&item) {
                 return true;
             }
-            context = item.into_context_path();
+            context = item.context_path();
         }
         false
     }
@@ -85,7 +85,7 @@ impl<S> ContextualSelector for S
 where
     S: Selector,
 {
-    fn context_match(&self, item: &Item<'_>) -> bool {
+    fn context_match(&self, item: &dyn Item<'_>) -> bool {
         item.as_element()
             .map_or(false, |element| self.is_match(&element))
     }
@@ -94,7 +94,7 @@ where
 pub struct NameSelector(pub &'static str);
 
 impl Selector for NameSelector {
-    fn is_match(&self, element: &Element<'_>) -> bool {
+    fn is_match(&self, element: &impl Element) -> bool {
         *self.0 == *element.name()
     }
 }
@@ -102,7 +102,7 @@ impl Selector for NameSelector {
 pub struct ClassSelector(pub &'static str);
 
 impl Selector for ClassSelector {
-    fn is_match(&self, element: &Element<'_>) -> bool {
+    fn is_match(&self, element: &impl Element) -> bool {
         element.classes().any(|class| class == self.0)
     }
 }
@@ -110,16 +110,14 @@ impl Selector for ClassSelector {
 pub struct IdSelector(pub &'static str);
 
 impl Selector for IdSelector {
-    fn is_match(&self, element: &Element<'_>) -> bool {
-        element
-            .attributes()
-            .any(|attr| attr.name == "id" && attr.value == self.0)
+    fn is_match(&self, element: &impl Element) -> bool {
+        element.attr("id") == Some(self.0)
     }
 }
 
 /// A contextual selector, the last selector must match the element exactly and the preceding must match elements in the context in that order
 impl<S: Selector> ContextualSelector for [S] {
-    fn context_match(&self, item: &Item<'_>) -> bool {
+    fn context_match(&self, item: &dyn Item<'_>) -> bool {
         let mut to_match = self.iter().rev();
         if let Some(end_matcher) = to_match.next() {
             if !item
@@ -148,7 +146,7 @@ impl<S: Selector> ContextualSelector for [S] {
 pub struct MatchAll;
 
 impl Selector for MatchAll {
-    fn is_match(&self, _element: &Element<'_>) -> bool {
+    fn is_match(&self, _element: &impl Element) -> bool {
         true
     }
 }
@@ -179,7 +177,7 @@ impl<C: OnlyContextualSelector, A: Selector> OnlyContextualSelector for ContextS
 pub struct ContextualSelectCons<C: OnlyContextualSelector, A: Selector>(pub C, pub A);
 
 impl<C: OnlyContextualSelector, A: Selector> ContextualSelector for ContextualSelectCons<C, A> {
-    fn context_match<'a>(&self, item: &Item<'a>) -> bool {
+    fn context_match<'a>(&self, item: &dyn Item<'a>) -> bool {
         item.as_element()
             .map_or(false, |element| self.1.is_match(&element))
             && self.0.match_any(item.as_path())
@@ -190,7 +188,7 @@ impl<C: OnlyContextualSelector, A: Selector> ContextualSelector for ContextualSe
 pub struct GroupSelector<A: ContextualSelector, B: ContextualSelector>(A, B);
 
 impl<A: ContextualSelector, B: ContextualSelector> ContextualSelector for GroupSelector<A, B> {
-    fn context_match(&self, item: &Item<'_>) -> bool {
+    fn context_match(&self, item: &dyn Item<'_>) -> bool {
         self.0.context_match(item) || self.1.context_match(item)
     }
 }
@@ -199,7 +197,7 @@ impl<A: ContextualSelector, B: ContextualSelector> ContextualSelector for GroupS
 pub struct AndSelector<A: Selector, B: Selector>(A, B);
 
 impl<A: Selector, B: Selector> Selector for AndSelector<A, B> {
-    fn is_match(&self, element: &Element<'_>) -> bool {
+    fn is_match(&self, element: &impl Element) -> bool {
         self.0.is_match(element) && self.1.is_match(element)
     }
 }
