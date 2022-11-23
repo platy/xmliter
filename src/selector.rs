@@ -229,6 +229,9 @@ fn test_matchers() {
     assert!(css_select!(."quote").context_match(&main_quote.as_path().as_item().unwrap()));
     assert!(!css_select!(."quote").context_match(&path_main.as_path().as_item().unwrap()));
 
+    assert!(!css_select!("p"#"quote").context_match(&main_quote.as_path().as_item().unwrap()));
+    assert!(css_select!("div"#"main").context_match(&path_main.as_path().as_item().unwrap()));
+
     assert!(!css_select!(#"main").context_match(&main_p.as_path().as_item().unwrap()));
     assert!(!css_select!(#"main").context_match(&main_quote.as_path().as_item().unwrap()));
     assert!(css_select!(#"main").context_match(&path_main.as_path().as_item().unwrap()));
