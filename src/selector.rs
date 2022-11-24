@@ -28,7 +28,7 @@ macro_rules! css_select {
             $crate::selector::ClassSelector($class),
         )
     };
-    ($name:literal#$id:literal) => {
+    ($name:literal #$id:literal) => {
         $crate::selector::Selector::and(
             $crate::selector::NameSelector($name),
             $crate::selector::IdSelector($id),

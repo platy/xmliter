@@ -2,8 +2,7 @@
 name = "xmliter"
 description = "Streaming iterator over xml/html paths in a document"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 quick-xml = "0.22.0"
-
