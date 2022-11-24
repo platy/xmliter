@@ -14,8 +14,9 @@ pub trait Element {
         }
     }
 
-    fn filter_attributes<F>(&self, predicate: F) -> FilterAttributes<Self, F>
+    fn filter_attributes<F>(self, predicate: F) -> FilterAttributes<Self, F>
     where
+        Self: Sized,
         F: Fn(&str, &str) -> bool,
     {
         FilterAttributes {
@@ -59,14 +60,14 @@ impl<'a> Iterator for Classes<'a> {
     }
 }
 
-pub struct FilterAttributes<'i, I: ?Sized, P: Fn(&str, &str) -> bool> {
-    pub(crate) inner: &'i I,
+pub struct FilterAttributes<I, P: Fn(&str, &str) -> bool> {
+    pub(crate) inner: I,
     pub(crate) predicate: P,
 }
 
-impl<'i, I, P> Element for FilterAttributes<'i, I, P>
+impl<I, P> Element for FilterAttributes<I, P>
 where
-    I: Element + ?Sized,
+    I: Element,
     P: Fn(&str, &str) -> bool,
 {
     fn name(&self) -> &str {

@@ -79,7 +79,7 @@ pub trait Item<'a> {
     fn as_path(&self) -> ElementPath<'a>;
 
     /// As a quick-xml event, for serialisation, allocates for start tags but not for others
-    fn as_event<'b>(&'b self) -> Event<'_>
+    fn as_event<'b>(&'b self) -> Event<'b>
     where
         'a: 'b,
     {
@@ -115,7 +115,7 @@ pub trait Item<'a> {
     where
         E1: Element,
         E2: Element,
-        F: Fn(&E1) -> E2,
+        F: Fn(E1) -> E2,
         Self: Sized,
     {
         MappedItem {
@@ -154,7 +154,7 @@ where
     I: Item<'a>,
     E1: Element,
     E2: Element,
-    F: Fn(&'a E1) -> E2,
+    F: Fn(E1) -> E2,
     Self: Sized,
 {
     _map: F,
@@ -167,7 +167,7 @@ where
     I: Item<'a>,
     E1: Element,
     E2: Element,
-    F: Fn(&E1) -> E2,
+    F: Fn(E1) -> E2,
 {
     fn node(&self) -> &Node {
         self.inner.node()
