@@ -5,4 +5,4 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-quick-xml = "0.22.0"
+quick-xml = "0.26"

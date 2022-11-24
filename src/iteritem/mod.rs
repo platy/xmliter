@@ -30,26 +30,25 @@ impl Traverser {
             self.path.path.pop().unwrap();
             self.drop_last = false;
         }
-        self.current = match reader.read_event(&mut self.buf) {
+        self.current = match reader.read_event_into(&mut self.buf) {
             Ok(e) => match e {
                 Event::Start(start) => Some(self.path.start(start, reader)),
                 Event::End(end) => {
-                    let decode = reader.decode(end.name()).unwrap();
+                    let element_name = end.name();
+                    let decode = reader.decoder().decode(element_name.as_ref()).unwrap();
                     let element = self.path.path.last().unwrap();
                     self.drop_last = true;
                     assert_eq!(decode, element.name);
                     Some(self.path.end())
                 }
                 Event::Empty(_) => todo!(),
-                Event::Text(text) => {
-                    Some(self.path.text(text.unescape_and_decode(reader).unwrap()))
-                }
+                Event::Text(text) => Some(self.path.text(text.unescape().unwrap().into_owned())),
                 Event::Comment(_) => todo!(),
                 Event::CData(_) => todo!(),
                 Event::Decl(_) => todo!(),
                 Event::PI(_) => todo!(),
                 Event::DocType(text) => {
-                    Some(self.path.doctype(text.unescape_and_decode(reader).unwrap()))
+                    Some(self.path.doctype(text.unescape().unwrap().into_owned()))
                 }
                 Event::Eof => None,
             },
@@ -80,34 +79,25 @@ pub trait Item<'a> {
     fn as_path(&self) -> ElementPath<'a>;
 
     fn as_event(&self) -> Event<'static> {
-        use std::fmt::Write;
-
+        // TODO not static
         match self.node() {
             Node::Text(ref unescaped) => {
-                let bytes_text = BytesText::from_escaped_str(unescaped).into_owned();
+                let bytes_text = BytesText::new(unescaped).into_owned();
                 Event::Text(bytes_text)
             }
-            Node::DocType(ref text) => {
-                Event::DocType(BytesText::from_escaped_str(text).into_owned())
-            }
+            Node::DocType(ref text) => Event::DocType(BytesText::new(text).into_owned()),
             Node::Start => {
                 let element = self.as_path().path.last().unwrap();
-                let mut s = element.name.clone();
-                let name_len = s.len();
-                for NormalisedAttribute { name, value } in &element.attrs {
-                    write!(&mut s, r#" {}="{}""#, name, value).unwrap();
-                }
-                Event::Start(BytesStart::owned(s, name_len))
+                Event::Start(
+                    BytesStart::new(&element.name)
+                        .with_attributes(&element.attrs)
+                        .into_owned(),
+                )
             }
-            Node::End => Event::End(BytesEnd::owned(
-                self.as_path()
-                    .path
-                    .last()
-                    .unwrap()
-                    .name
-                    .clone()
-                    .into_bytes(),
-            )),
+            Node::End => {
+                let element = self.as_path().path.last().unwrap();
+                Event::End(BytesEnd::new(&element.name).into_owned())
+            }
         }
     }
 

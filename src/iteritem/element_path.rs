@@ -1,7 +1,7 @@
 //! Core parts of representing an element and it's ancestral path
 use std::{fmt, io::BufRead, slice::SliceIndex};
 
-use quick_xml::{events::BytesStart, Reader};
+use quick_xml::{events::BytesStart, name::QName, Reader};
 
 /// An owned path of elements
 #[derive(Debug, Clone)]
@@ -23,15 +23,16 @@ impl ElementPathBuf {
     }
 
     pub(crate) fn start<B: BufRead>(&mut self, start: BytesStart, reader: &Reader<B>) -> Node {
+        let decoder = reader.decoder();
         let element = NormalisedElement {
-            name: reader.decode(start.name()).unwrap().to_string(),
+            name: decoder.decode(start.name().as_ref()).unwrap().to_string(),
             attrs: start
                 .attributes()
                 .map(|a| {
                     let a = a.unwrap();
                     NormalisedAttribute {
-                        name: reader.decode(a.key).unwrap().to_string(),
-                        value: reader.decode(&a.value).unwrap().to_string(),
+                        name: decoder.decode(a.key.as_ref()).unwrap().to_string(),
+                        value: decoder.decode(&a.value).unwrap().to_string(),
                     }
                 })
                 .collect(),
@@ -193,6 +194,14 @@ impl fmt::Debug for NormalisedElement {
 pub(crate) struct NormalisedAttribute {
     pub(crate) name: String,
     pub(crate) value: String,
+}
+
+impl<'a> From<&'a NormalisedAttribute> for quick_xml::events::attributes::Attribute<'a> {
+    fn from(NormalisedAttribute { name, value }: &'a NormalisedAttribute) -> Self {
+        let key = QName(name.as_bytes());
+        let value = value.as_bytes().into();
+        quick_xml::events::attributes::Attribute { key, value }
+    }
 }
 
 /// An item in the traversal, with access to the current node and the context of elements
