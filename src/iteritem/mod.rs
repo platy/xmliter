@@ -78,25 +78,24 @@ pub trait Item<'a> {
     /// The element path, including the element itself if it is one
     fn as_path(&self) -> ElementPath<'a>;
 
-    fn as_event(&self) -> Event<'static> {
-        // TODO not static
+    /// As a quick-xml event, for serialisation, allocates for start tags but not for others
+    fn as_event<'b>(&'b self) -> Event<'_>
+    where
+        'a: 'b,
+    {
         match self.node() {
             Node::Text(ref unescaped) => {
-                let bytes_text = BytesText::new(unescaped).into_owned();
+                let bytes_text = BytesText::new(unescaped);
                 Event::Text(bytes_text)
             }
-            Node::DocType(ref text) => Event::DocType(BytesText::new(text).into_owned()),
+            Node::DocType(ref text) => Event::DocType(BytesText::new(text)),
             Node::Start => {
                 let element = self.as_path().path.last().unwrap();
-                Event::Start(
-                    BytesStart::new(&element.name)
-                        .with_attributes(&element.attrs)
-                        .into_owned(),
-                )
+                Event::Start(BytesStart::new(&element.name).with_attributes(&element.attrs))
             }
             Node::End => {
                 let element = self.as_path().path.last().unwrap();
-                Event::End(BytesEnd::new(&element.name).into_owned())
+                Event::End(BytesEnd::new(&element.name))
             }
         }
     }
