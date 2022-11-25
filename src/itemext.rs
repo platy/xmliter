@@ -1,7 +1,7 @@
 use std::ops::RangeFrom;
 
 use crate::{
-    iteritem::{ElementPath, Node, RawElement, RawItem},
+    iteritem::{ElementPath, Node, RawElement, RawElementPath, RawItem},
     selector::ContextualSelector,
     Item,
 };
@@ -50,7 +50,7 @@ impl<'a, I: Item<'a>> Item<'a> for IncludeItem<I> {
         todo!()
     }
 
-    fn as_path(&self) -> ElementPath<'a> {
+    fn as_path(&self) -> RawElementPath<'a> {
         self.inner.as_path().slice(self.range.clone()) // feels like this could be stored instead of the range
     }
 

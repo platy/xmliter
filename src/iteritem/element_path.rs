@@ -3,6 +3,8 @@ use std::{fmt, io::BufRead, slice::SliceIndex};
 
 use quick_xml::{events::BytesStart, name::QName, Reader};
 
+use crate::Element;
+
 /// An owned path of elements
 #[derive(Debug, Clone)]
 pub struct ElementPathBuf {
@@ -61,8 +63,8 @@ impl ElementPathBuf {
         Node::End
     }
 
-    pub(crate) fn as_path(&self) -> ElementPath {
-        ElementPath {
+    pub(crate) fn as_path(&self) -> RawElementPath {
+        RawElementPath {
             path: &self.path,
             buf: self,
         }
@@ -71,24 +73,33 @@ impl ElementPathBuf {
 
 /// A path of elements
 #[derive(Clone, Copy)]
-pub struct ElementPath<'a> {
+pub struct RawElementPath<'a> {
     pub(crate) path: &'a [NormalisedElement],
     pub(crate) buf: &'a ElementPathBuf,
 }
 
-impl<'a> ElementPath<'a> {
-    pub fn len(&self) -> usize {
+pub trait ElementPath: Sized {
+    type Element: Element;
+    fn len(&self) -> usize;
+}
+
+impl<'a> ElementPath for RawElementPath<'a> {
+    type Element = RawElement<'a>;
+
+    fn len(&self) -> usize {
         self.path.len()
     }
+}
 
-    pub(crate) fn split_last(&self) -> Option<(RawElement<'a>, ElementPath<'a>)> {
+impl<'a> RawElementPath<'a> {
+    pub(crate) fn split_last(&self) -> Option<(RawElement<'a>, Self)> {
         if let Some((element, path)) = self.path.split_last() {
             Some((
                 RawElement {
                     element,
                     _buf: self.buf,
                 },
-                ElementPath {
+                Self {
                     path,
                     buf: self.buf,
                 },
@@ -127,48 +138,12 @@ impl<'a> ElementPath<'a> {
     }
 }
 
-impl<'a> fmt::Debug for ElementPath<'a> {
+impl<'a> fmt::Debug for RawElementPath<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for element in self.path {
             write!(f, "/{:?}", element)?;
         }
         Ok(())
-    }
-}
-
-impl<'a> IntoIterator for ElementPath<'a> {
-    type Item = RawElement<'a>;
-
-    type IntoIter = ElementPathIter<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        ElementPathIter(self)
-    }
-}
-
-pub struct ElementPathIter<'a>(ElementPath<'a>);
-
-impl<'a> Iterator for ElementPathIter<'a> {
-    type Item = RawElement<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some((first, rest)) = self.0.path.split_first() {
-            self.0.path = rest;
-            Some(self.0.as_element(first))
-        } else {
-            None
-        }
-    }
-}
-
-impl<'a> DoubleEndedIterator for ElementPathIter<'a> {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        if let Some((last, rest)) = self.0.path.split_last() {
-            self.0.path = rest;
-            Some(self.0.as_element(last))
-        } else {
-            None
-        }
     }
 }
 
@@ -206,7 +181,7 @@ impl<'a> From<&'a NormalisedAttribute> for quick_xml::events::attributes::Attrib
 
 /// An item in the traversal, with access to the current node and the context of elements
 pub struct RawItem<'a> {
-    pub(crate) context: ElementPath<'a>,
+    pub(crate) context: RawElementPath<'a>,
     pub(crate) node: Node,
 }
 

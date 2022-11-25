@@ -1,4 +1,4 @@
-use crate::iteritem::{Element, ElementPath, Item};
+use crate::iteritem::{Element, Item, RawElementPath};
 
 /// Selects elements using a syntax similar to css 1 selectors, supporting css 1 selectors except pseudo-elements and pseudo classes
 ///
@@ -59,7 +59,7 @@ pub trait Selector {
 pub trait ContextualSelector {
     fn context_match(&self, item: &dyn Item<'_>) -> bool;
 
-    fn match_any(&self, mut context: ElementPath<'_>) -> bool {
+    fn match_any(&self, mut context: RawElementPath<'_>) -> bool {
         while let Some(item) = context.as_item() {
             if self.context_match(&item) {
                 return true;
@@ -78,7 +78,7 @@ pub trait ContextualSelector {
 }
 
 pub trait OnlyContextualSelector {
-    fn match_any(&self, context: ElementPath) -> bool;
+    fn match_any(&self, context: RawElementPath) -> bool;
 }
 
 impl<S> ContextualSelector for S
@@ -129,9 +129,10 @@ impl<S: Selector> ContextualSelector for [S] {
         } else {
             return true;
         }
-        let mut path = item.context_path().into_iter().rev();
+        let mut path = item.context_path();
         'outer: for matcher in to_match {
-            for element in &mut path {
+            while let Some((element, parent_path)) = path.split_last() {
+                path = parent_path;
                 if matcher.is_match(&element) {
                     continue 'outer;
                 }
@@ -152,7 +153,7 @@ impl Selector for MatchAll {
 }
 
 impl OnlyContextualSelector for MatchAll {
-    fn match_any(&self, _context: ElementPath<'_>) -> bool {
+    fn match_any(&self, _context: RawElementPath<'_>) -> bool {
         true
     }
 }
@@ -161,7 +162,7 @@ impl OnlyContextualSelector for MatchAll {
 pub struct ContextSelectCons<C, A>(pub C, pub A);
 
 impl<C: OnlyContextualSelector, A: Selector> OnlyContextualSelector for ContextSelectCons<C, A> {
-    fn match_any(&self, mut context: ElementPath<'_>) -> bool {
+    fn match_any(&self, mut context: RawElementPath<'_>) -> bool {
         while let Some((last, rest)) = context.split_last() {
             let element = last;
             if self.1.is_match(&element) {

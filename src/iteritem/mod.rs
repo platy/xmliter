@@ -76,7 +76,7 @@ pub trait Item<'a> {
     // pub(crate) fn context_path(&self) -> ElementPath<'_>;
 
     /// The element path, including the element itself if it is one
-    fn as_path(&self) -> ElementPath<'a>;
+    fn as_path(&self) -> RawElementPath<'a>;
 
     /// As a quick-xml event, for serialisation, allocates for start tags but not for others
     fn as_event<'b>(&'b self) -> Event<'b>
@@ -101,7 +101,7 @@ pub trait Item<'a> {
     }
 
     /// The element path, not including the potential current element
-    fn context_path(&self) -> ElementPath<'a> {
+    fn context_path(&self) -> RawElementPath<'a> {
         match self.node() {
             Node::Start | Node::End => {
                 let path = self.as_path();
@@ -139,7 +139,7 @@ impl<'a> Item<'a> for RawItem<'a> {
     }
 
     /// The element path, including the element itself if it is one
-    fn as_path(&self) -> ElementPath<'a> {
+    fn as_path(&self) -> RawElementPath<'a> {
         self.context
     }
 
@@ -177,7 +177,7 @@ where
         todo!("Element also needs to be a trait")
     }
 
-    fn as_path(&self) -> ElementPath<'a> {
+    fn as_path(&self) -> RawElementPath<'a> {
         todo!("ElementPath should be a trait")
     }
 }
