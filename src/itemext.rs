@@ -1,7 +1,7 @@
 use std::ops::RangeFrom;
 
 use crate::{
-    iteritem::{ElementPath, Node, RawElement, RawElementPath, RawItem},
+    iteritem::{ElementPath, Node, RawElement, RawElementPath},
     selector::ContextualSelector,
     Item,
 };
@@ -24,11 +24,7 @@ where
     {
         let path = self.as_path();
         for start in 0..path.len() {
-            let item = RawItem {
-                context: path.slice(..=start),
-                node: Node::Start,
-            };
-            if selector.context_match(&item) {
+            if selector.context_match(&path.slice(..=start)) {
                 let item = IncludeItem {
                     range: start..,
                     inner: self,

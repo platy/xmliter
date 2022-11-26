@@ -109,17 +109,6 @@ impl<'a> RawElementPath<'a> {
         }
     }
 
-    pub(crate) fn as_item(&self) -> Option<RawItem<'a>> {
-        if !self.path.is_empty() {
-            Some(RawItem {
-                context: *self,
-                node: Node::Start,
-            })
-        } else {
-            None
-        }
-    }
-
     pub(crate) fn as_element(&self, first: &'a NormalisedElement) -> RawElement<'a> {
         RawElement {
             element: first,

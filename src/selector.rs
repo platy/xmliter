@@ -1,4 +1,4 @@
-use crate::iteritem::{Element, Item, RawElementPath};
+use crate::iteritem::{Element, RawElementPath};
 
 /// Selects elements using a syntax similar to css 1 selectors, supporting css 1 selectors except pseudo-elements and pseudo classes
 ///
@@ -57,16 +57,16 @@ pub trait Selector {
 }
 
 pub trait ContextualSelector {
-    fn context_match(&self, item: &dyn Item<'_>) -> bool;
+    fn context_match(&self, item: &RawElementPath<'_>) -> bool;
 
-    fn match_any(&self, mut context: RawElementPath<'_>) -> bool {
-        while let Some(item) = context.as_item() {
-            if self.context_match(&item) {
+    fn match_any(&self, mut path: RawElementPath<'_>) -> bool {
+        loop {
+            if self.context_match(&path) {
                 return true;
             }
-            context = item.context_path();
+            let Some((_, parent_path)) = path.split_last() else { return false };
+            path = parent_path;
         }
-        false
     }
 
     fn or<O: ContextualSelector>(self, other: O) -> GroupSelector<Self, O>
@@ -85,9 +85,9 @@ impl<S> ContextualSelector for S
 where
     S: Selector,
 {
-    fn context_match(&self, item: &dyn Item<'_>) -> bool {
-        item.as_element()
-            .map_or(false, |element| self.is_match(&element))
+    fn context_match(&self, path: &RawElementPath<'_>) -> bool {
+        path.split_last()
+            .map_or(false, |(element, _)| self.is_match(&element))
     }
 }
 
@@ -117,19 +117,13 @@ impl Selector for IdSelector {
 
 /// A contextual selector, the last selector must match the element exactly and the preceding must match elements in the context in that order
 impl<S: Selector> ContextualSelector for [S] {
-    fn context_match(&self, item: &dyn Item<'_>) -> bool {
+    fn context_match(&self, path: &RawElementPath<'_>) -> bool {
         let mut to_match = self.iter().rev();
-        if let Some(end_matcher) = to_match.next() {
-            if !item
-                .as_element()
-                .map_or(false, |element| end_matcher.is_match(&element))
-            {
-                return false;
-            }
-        } else {
-            return true;
+        let Some(end_matcher) = to_match.next() else { return true };
+        let Some((element, mut path)) = path.split_last() else { return false };
+        if !end_matcher.is_match(&element) {
+            return false;
         }
-        let mut path = item.context_path();
         'outer: for matcher in to_match {
             while let Some((element, parent_path)) = path.split_last() {
                 path = parent_path;
@@ -178,10 +172,12 @@ impl<C: OnlyContextualSelector, A: Selector> OnlyContextualSelector for ContextS
 pub struct ContextualSelectCons<C: OnlyContextualSelector, A: Selector>(pub C, pub A);
 
 impl<C: OnlyContextualSelector, A: Selector> ContextualSelector for ContextualSelectCons<C, A> {
-    fn context_match<'a>(&self, item: &dyn Item<'a>) -> bool {
-        item.as_element()
-            .map_or(false, |element| self.1.is_match(&element))
-            && self.0.match_any(item.as_path())
+    fn context_match<'a>(&self, path: &RawElementPath<'a>) -> bool {
+        if let Some((element, path)) = path.split_last() {
+            self.1.is_match(&element) && self.0.match_any(path)
+        } else {
+            false
+        }
     }
 }
 
@@ -189,7 +185,7 @@ impl<C: OnlyContextualSelector, A: Selector> ContextualSelector for ContextualSe
 pub struct GroupSelector<A: ContextualSelector, B: ContextualSelector>(A, B);
 
 impl<A: ContextualSelector, B: ContextualSelector> ContextualSelector for GroupSelector<A, B> {
-    fn context_match(&self, item: &dyn Item<'_>) -> bool {
+    fn context_match(&self, item: &RawElementPath) -> bool {
         self.0.context_match(item) || self.1.context_match(item)
     }
 }
@@ -218,32 +214,27 @@ fn test_matchers() {
     let mut body_quote = path_body.clone();
     body_quote.append_element("p", vec![("class", "fixed quote")]);
 
-    assert!(css_select!("p").context_match(&main_p.as_path().as_item().unwrap()));
-    assert!(css_select!("p").context_match(&main_quote.as_path().as_item().unwrap()));
-    assert!(!css_select!("p").context_match(&path_main.as_path().as_item().unwrap()));
+    assert!(css_select!("p").context_match(&main_p.as_path()));
+    assert!(css_select!("p").context_match(&main_quote.as_path()));
+    assert!(!css_select!("p").context_match(&path_main.as_path()));
 
-    assert!(!css_select!("p"."quote").context_match(&main_p.as_path().as_item().unwrap()));
-    assert!(css_select!("p"."quote").context_match(&main_quote.as_path().as_item().unwrap()));
-    assert!(!css_select!("p"."quote").context_match(&path_main.as_path().as_item().unwrap()));
+    assert!(!css_select!("p"."quote").context_match(&main_p.as_path()));
+    assert!(css_select!("p"."quote").context_match(&main_quote.as_path()));
+    assert!(!css_select!("p"."quote").context_match(&path_main.as_path()));
 
-    assert!(!css_select!(."quote").context_match(&main_p.as_path().as_item().unwrap()));
-    assert!(css_select!(."quote").context_match(&main_quote.as_path().as_item().unwrap()));
-    assert!(!css_select!(."quote").context_match(&path_main.as_path().as_item().unwrap()));
+    assert!(!css_select!(."quote").context_match(&main_p.as_path()));
+    assert!(css_select!(."quote").context_match(&main_quote.as_path()));
+    assert!(!css_select!(."quote").context_match(&path_main.as_path()));
 
-    assert!(!css_select!("p"#"quote").context_match(&main_quote.as_path().as_item().unwrap()));
-    assert!(css_select!("div"#"main").context_match(&path_main.as_path().as_item().unwrap()));
+    assert!(!css_select!("p"#"quote").context_match(&main_quote.as_path()));
+    assert!(css_select!("div"#"main").context_match(&path_main.as_path()));
 
-    assert!(!css_select!(#"main").context_match(&main_p.as_path().as_item().unwrap()));
-    assert!(!css_select!(#"main").context_match(&main_quote.as_path().as_item().unwrap()));
-    assert!(css_select!(#"main").context_match(&path_main.as_path().as_item().unwrap()));
+    assert!(!css_select!(#"main").context_match(&main_p.as_path()));
+    assert!(!css_select!(#"main").context_match(&main_quote.as_path()));
+    assert!(css_select!(#"main").context_match(&path_main.as_path()));
 
-    assert!(
-        !css_select!((#"main") ("p"."quote")).context_match(&main_p.as_path().as_item().unwrap())
-    );
-    assert!(css_select!((#"main") ("p"."quote"))
-        .context_match(&main_quote.as_path().as_item().unwrap()));
-    assert!(!css_select!((#"main") ("p"."quote"))
-        .context_match(&path_main.as_path().as_item().unwrap()));
-    assert!(!css_select!((#"main") ("p"."quote"))
-        .context_match(&body_quote.as_path().as_item().unwrap()));
+    assert!(!css_select!((#"main") ("p"."quote")).context_match(&main_p.as_path()));
+    assert!(css_select!((#"main") ("p"."quote")).context_match(&main_quote.as_path()));
+    assert!(!css_select!((#"main") ("p"."quote")).context_match(&path_main.as_path()));
+    assert!(!css_select!((#"main") ("p"."quote")).context_match(&body_quote.as_path()));
 }
