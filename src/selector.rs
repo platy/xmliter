@@ -1,4 +1,4 @@
-use crate::iteritem::{Element, RawElementPath};
+use crate::iteritem::{Element, ElementPath};
 
 /// Selects elements using a syntax similar to css 1 selectors, supporting css 1 selectors except pseudo-elements and pseudo classes
 ///
@@ -46,7 +46,7 @@ macro_rules! css_select {
 }
 
 pub trait Selector {
-    fn is_match(&self, element: &impl Element) -> bool;
+    fn is_match(&self, element: &dyn Element) -> bool;
 
     fn and<O: Selector>(self, other: O) -> AndSelector<Self, O>
     where
@@ -57,11 +57,11 @@ pub trait Selector {
 }
 
 pub trait ContextualSelector {
-    fn context_match(&self, item: &RawElementPath<'_>) -> bool;
+    fn context_match(&self, path: impl ElementPath) -> bool;
 
-    fn match_any(&self, mut path: RawElementPath<'_>) -> bool {
+    fn match_any(&self, mut path: impl ElementPath) -> bool {
         loop {
-            if self.context_match(&path) {
+            if self.context_match(path.clone()) {
                 return true;
             }
             let Some((_, parent_path)) = path.split_last() else { return false };
@@ -78,14 +78,14 @@ pub trait ContextualSelector {
 }
 
 pub trait OnlyContextualSelector {
-    fn match_any(&self, context: RawElementPath) -> bool;
+    fn match_any(&self, context: impl ElementPath) -> bool;
 }
 
 impl<S> ContextualSelector for S
 where
     S: Selector,
 {
-    fn context_match(&self, path: &RawElementPath<'_>) -> bool {
+    fn context_match(&self, path: impl ElementPath) -> bool {
         path.split_last()
             .map_or(false, |(element, _)| self.is_match(&element))
     }
@@ -94,7 +94,7 @@ where
 pub struct NameSelector(pub &'static str);
 
 impl Selector for NameSelector {
-    fn is_match(&self, element: &impl Element) -> bool {
+    fn is_match(&self, element: &dyn Element) -> bool {
         *self.0 == *element.name()
     }
 }
@@ -102,7 +102,7 @@ impl Selector for NameSelector {
 pub struct ClassSelector(pub &'static str);
 
 impl Selector for ClassSelector {
-    fn is_match(&self, element: &impl Element) -> bool {
+    fn is_match(&self, element: &dyn Element) -> bool {
         element.classes().any(|class| class == self.0)
     }
 }
@@ -110,14 +110,14 @@ impl Selector for ClassSelector {
 pub struct IdSelector(pub &'static str);
 
 impl Selector for IdSelector {
-    fn is_match(&self, element: &impl Element) -> bool {
+    fn is_match(&self, element: &dyn Element) -> bool {
         element.attr("id") == Some(self.0)
     }
 }
 
 /// A contextual selector, the last selector must match the element exactly and the preceding must match elements in the context in that order
 impl<S: Selector> ContextualSelector for [S] {
-    fn context_match(&self, path: &RawElementPath<'_>) -> bool {
+    fn context_match(&self, path: impl ElementPath) -> bool {
         let mut to_match = self.iter().rev();
         let Some(end_matcher) = to_match.next() else { return true };
         let Some((element, mut path)) = path.split_last() else { return false };
@@ -141,13 +141,13 @@ impl<S: Selector> ContextualSelector for [S] {
 pub struct MatchAll;
 
 impl Selector for MatchAll {
-    fn is_match(&self, _element: &impl Element) -> bool {
+    fn is_match(&self, _element: &dyn Element) -> bool {
         true
     }
 }
 
 impl OnlyContextualSelector for MatchAll {
-    fn match_any(&self, _context: RawElementPath<'_>) -> bool {
+    fn match_any(&self, _context: impl ElementPath) -> bool {
         true
     }
 }
@@ -156,7 +156,7 @@ impl OnlyContextualSelector for MatchAll {
 pub struct ContextSelectCons<C, A>(pub C, pub A);
 
 impl<C: OnlyContextualSelector, A: Selector> OnlyContextualSelector for ContextSelectCons<C, A> {
-    fn match_any(&self, mut context: RawElementPath<'_>) -> bool {
+    fn match_any(&self, mut context: impl ElementPath) -> bool {
         while let Some((last, rest)) = context.split_last() {
             let element = last;
             if self.1.is_match(&element) {
@@ -172,7 +172,7 @@ impl<C: OnlyContextualSelector, A: Selector> OnlyContextualSelector for ContextS
 pub struct ContextualSelectCons<C: OnlyContextualSelector, A: Selector>(pub C, pub A);
 
 impl<C: OnlyContextualSelector, A: Selector> ContextualSelector for ContextualSelectCons<C, A> {
-    fn context_match<'a>(&self, path: &RawElementPath<'a>) -> bool {
+    fn context_match(&self, path: impl ElementPath) -> bool {
         if let Some((element, path)) = path.split_last() {
             self.1.is_match(&element) && self.0.match_any(path)
         } else {
@@ -185,8 +185,8 @@ impl<C: OnlyContextualSelector, A: Selector> ContextualSelector for ContextualSe
 pub struct GroupSelector<A: ContextualSelector, B: ContextualSelector>(A, B);
 
 impl<A: ContextualSelector, B: ContextualSelector> ContextualSelector for GroupSelector<A, B> {
-    fn context_match(&self, item: &RawElementPath) -> bool {
-        self.0.context_match(item) || self.1.context_match(item)
+    fn context_match(&self, path: impl ElementPath) -> bool {
+        self.0.context_match(path.clone()) || self.1.context_match(path)
     }
 }
 
@@ -194,7 +194,7 @@ impl<A: ContextualSelector, B: ContextualSelector> ContextualSelector for GroupS
 pub struct AndSelector<A: Selector, B: Selector>(A, B);
 
 impl<A: Selector, B: Selector> Selector for AndSelector<A, B> {
-    fn is_match(&self, element: &impl Element) -> bool {
+    fn is_match(&self, element: &dyn Element) -> bool {
         self.0.is_match(element) && self.1.is_match(element)
     }
 }
@@ -214,27 +214,27 @@ fn test_matchers() {
     let mut body_quote = path_body.clone();
     body_quote.append_element("p", vec![("class", "fixed quote")]);
 
-    assert!(css_select!("p").context_match(&main_p.as_path()));
-    assert!(css_select!("p").context_match(&main_quote.as_path()));
-    assert!(!css_select!("p").context_match(&path_main.as_path()));
+    assert!(css_select!("p").context_match(main_p.as_path()));
+    assert!(css_select!("p").context_match(main_quote.as_path()));
+    assert!(!css_select!("p").context_match(path_main.as_path()));
 
-    assert!(!css_select!("p"."quote").context_match(&main_p.as_path()));
-    assert!(css_select!("p"."quote").context_match(&main_quote.as_path()));
-    assert!(!css_select!("p"."quote").context_match(&path_main.as_path()));
+    assert!(!css_select!("p"."quote").context_match(main_p.as_path()));
+    assert!(css_select!("p"."quote").context_match(main_quote.as_path()));
+    assert!(!css_select!("p"."quote").context_match(path_main.as_path()));
 
-    assert!(!css_select!(."quote").context_match(&main_p.as_path()));
-    assert!(css_select!(."quote").context_match(&main_quote.as_path()));
-    assert!(!css_select!(."quote").context_match(&path_main.as_path()));
+    assert!(!css_select!(."quote").context_match(main_p.as_path()));
+    assert!(css_select!(."quote").context_match(main_quote.as_path()));
+    assert!(!css_select!(."quote").context_match(path_main.as_path()));
 
-    assert!(!css_select!("p"#"quote").context_match(&main_quote.as_path()));
-    assert!(css_select!("div"#"main").context_match(&path_main.as_path()));
+    assert!(!css_select!("p"#"quote").context_match(main_quote.as_path()));
+    assert!(css_select!("div"#"main").context_match(path_main.as_path()));
 
-    assert!(!css_select!(#"main").context_match(&main_p.as_path()));
-    assert!(!css_select!(#"main").context_match(&main_quote.as_path()));
-    assert!(css_select!(#"main").context_match(&path_main.as_path()));
+    assert!(!css_select!(#"main").context_match(main_p.as_path()));
+    assert!(!css_select!(#"main").context_match(main_quote.as_path()));
+    assert!(css_select!(#"main").context_match(path_main.as_path()));
 
-    assert!(!css_select!((#"main") ("p"."quote")).context_match(&main_p.as_path()));
-    assert!(css_select!((#"main") ("p"."quote")).context_match(&main_quote.as_path()));
-    assert!(!css_select!((#"main") ("p"."quote")).context_match(&path_main.as_path()));
-    assert!(!css_select!((#"main") ("p"."quote")).context_match(&body_quote.as_path()));
+    assert!(!css_select!((#"main") ("p"."quote")).context_match(main_p.as_path()));
+    assert!(css_select!((#"main") ("p"."quote")).context_match(main_quote.as_path()));
+    assert!(!css_select!((#"main") ("p"."quote")).context_match(path_main.as_path()));
+    assert!(!css_select!((#"main") ("p"."quote")).context_match(body_quote.as_path()));
 }

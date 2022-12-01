@@ -78,37 +78,7 @@ pub struct RawElementPath<'a> {
     pub(crate) buf: &'a ElementPathBuf,
 }
 
-pub trait ElementPath: Sized {
-    type Element: Element;
-    fn len(&self) -> usize;
-}
-
-impl<'a> ElementPath for RawElementPath<'a> {
-    type Element = RawElement<'a>;
-
-    fn len(&self) -> usize {
-        self.path.len()
-    }
-}
-
 impl<'a> RawElementPath<'a> {
-    pub(crate) fn split_last(&self) -> Option<(RawElement<'a>, Self)> {
-        if let Some((element, path)) = self.path.split_last() {
-            Some((
-                RawElement {
-                    element,
-                    _buf: self.buf,
-                },
-                Self {
-                    path,
-                    buf: self.buf,
-                },
-            ))
-        } else {
-            None
-        }
-    }
-
     pub(crate) fn as_element(&self, first: &'a NormalisedElement) -> RawElement<'a> {
         RawElement {
             element: first,
@@ -133,6 +103,46 @@ impl<'a> fmt::Debug for RawElementPath<'a> {
             write!(f, "/{:?}", element)?;
         }
         Ok(())
+    }
+}
+
+pub trait ElementPath: Clone {
+    type E: Element;
+    fn len(&self) -> usize;
+    fn get(&self, idx: usize) -> Option<Self::E>;
+    fn split_last(&self) -> Option<(Self::E, Self)>
+    where
+        Self: Sized;
+}
+
+impl<'a> ElementPath for RawElementPath<'a> {
+    type E = RawElement<'a>;
+    fn len(&self) -> usize {
+        self.path.len()
+    }
+
+    fn get(&self, idx: usize) -> Option<Self::E> {
+        self.path.get(idx).map(|element| RawElement {
+            element,
+            _buf: self.buf,
+        })
+    }
+
+    fn split_last(&self) -> Option<(RawElement<'a>, Self)> {
+        if let Some((element, path)) = self.path.split_last() {
+            Some((
+                RawElement {
+                    element,
+                    _buf: self.buf,
+                },
+                Self {
+                    path,
+                    buf: self.buf,
+                },
+            ))
+        } else {
+            None
+        }
     }
 }
 

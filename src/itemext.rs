@@ -9,7 +9,7 @@ use crate::{
 /// Extensions for operations on an item which use selectors, currently just to avoid circular dependencies
 pub trait ItemExt {
     /// Filters this item by the selector. If an element in the context is found to match the selector, returns `Some` with the context starting at that element, if it matches the current element, returns that with no context and otherwise returns `None`
-    fn include(self, selector: &dyn ContextualSelector) -> Option<IncludeItem<Self>>
+    fn include(self, selector: &impl ContextualSelector) -> Option<IncludeItem<Self>>
     where
         Self: Sized;
 }
@@ -18,13 +18,13 @@ impl<'a, T> ItemExt for T
 where
     T: Item<'a>,
 {
-    fn include(self, selector: &dyn ContextualSelector) -> Option<IncludeItem<Self>>
+    fn include(self, selector: &impl ContextualSelector) -> Option<IncludeItem<Self>>
     where
         Self: Sized,
     {
         let path = self.as_path();
         for start in 0..path.len() {
-            if selector.context_match(&path.slice(..=start)) {
+            if selector.context_match(path.slice(..=start)) {
                 let item = IncludeItem {
                     range: start..,
                     inner: self,
