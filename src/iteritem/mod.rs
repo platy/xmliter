@@ -128,7 +128,7 @@ pub trait Item<'a> {
     {
         MappedItem {
             inner: self,
-            _map: map,
+            map,
             _phantom: PhantomData::default(),
         }
     }
@@ -167,7 +167,7 @@ where
     F: Fn(<<I as Item<'a>>::Path as ElementPath<'a>>::E) -> E2,
     Self: Sized,
 {
-    _map: F,
+    map: F,
     inner: I,
     _phantom: PhantomData<&'a E2>,
 }
@@ -187,11 +187,15 @@ where
     }
 
     fn as_element(&self) -> Option<<Self::Path as ElementPath<'a>>::E> {
-        todo!("Element also needs to be a trait")
+        self.inner.as_element().map(&self.map)
     }
 
     fn as_path(&self) -> Self::Path {
-        todo!("ElementPath should be a trait")
+        MappedPath {
+            map: self.map.clone(),
+            inner: self.inner.as_path(),
+            _phantom: PhantomData,
+        }
     }
 }
 
@@ -254,7 +258,7 @@ where
     fn slice<I: std::slice::SliceIndex<[NormalisedElement], Output = [NormalisedElement]>>(
         &self,
         // not sure about this type, it looks weird
-        index: I,
+        _index: I,
     ) -> Self {
         todo!()
     }
