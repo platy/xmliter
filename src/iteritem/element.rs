@@ -2,8 +2,8 @@ use std::mem;
 
 use crate::iteritem::element_path::{NormalisedAttribute, RawElement};
 
-pub trait Element {
-    fn name(&self) -> &str;
+pub trait Element<'a> {
+    fn name(&self) -> &'a str;
 
     fn attr(&self, search: &str) -> Option<&str>;
 
@@ -25,9 +25,14 @@ pub trait Element {
         }
     }
 }
+pub trait ElementHasAttributes<'a> {
+    type Attribute: Into<quick_xml::events::attributes::Attribute<'a>>;
+    type Attributes: Iterator<Item = Self::Attribute>;
+    fn attributes(&self) -> Self::Attributes;
+}
 
-impl<'a> Element for RawElement<'a> {
-    fn name(&self) -> &str {
+impl<'a> Element<'a> for RawElement<'a> {
+    fn name(&self) -> &'a str {
         &self.element.name
     }
 
@@ -65,12 +70,12 @@ pub struct FilterAttributes<I, P: Fn(&str, &str) -> bool> {
     pub(crate) predicate: P,
 }
 
-impl<I, P> Element for FilterAttributes<I, P>
+impl<'a, I, P> Element<'a> for FilterAttributes<I, P>
 where
-    I: Element,
+    I: Element<'a>,
     P: Fn(&str, &str) -> bool,
 {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'a str {
         self.inner.name()
     }
 

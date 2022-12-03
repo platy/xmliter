@@ -57,9 +57,9 @@ pub trait Selector {
 }
 
 pub trait ContextualSelector {
-    fn context_match(&self, path: impl ElementPath) -> bool;
+    fn context_match<'a>(&self, path: impl ElementPath<'a>) -> bool;
 
-    fn match_any(&self, mut path: impl ElementPath) -> bool {
+    fn match_any<'a>(&self, mut path: impl ElementPath<'a>) -> bool {
         loop {
             if self.context_match(path.clone()) {
                 return true;
@@ -78,14 +78,14 @@ pub trait ContextualSelector {
 }
 
 pub trait OnlyContextualSelector {
-    fn match_any(&self, context: impl ElementPath) -> bool;
+    fn match_any<'a>(&self, context: impl ElementPath<'a>) -> bool;
 }
 
 impl<S> ContextualSelector for S
 where
     S: Selector,
 {
-    fn context_match(&self, path: impl ElementPath) -> bool {
+    fn context_match<'a>(&self, path: impl ElementPath<'a>) -> bool {
         path.split_last()
             .map_or(false, |(element, _)| self.is_match(&element))
     }
@@ -117,7 +117,7 @@ impl Selector for IdSelector {
 
 /// A contextual selector, the last selector must match the element exactly and the preceding must match elements in the context in that order
 impl<S: Selector> ContextualSelector for [S] {
-    fn context_match(&self, path: impl ElementPath) -> bool {
+    fn context_match<'a>(&self, path: impl ElementPath<'a>) -> bool {
         let mut to_match = self.iter().rev();
         let Some(end_matcher) = to_match.next() else { return true };
         let Some((element, mut path)) = path.split_last() else { return false };
@@ -147,7 +147,7 @@ impl Selector for MatchAll {
 }
 
 impl OnlyContextualSelector for MatchAll {
-    fn match_any(&self, _context: impl ElementPath) -> bool {
+    fn match_any<'a>(&self, _context: impl ElementPath<'a>) -> bool {
         true
     }
 }
@@ -156,7 +156,7 @@ impl OnlyContextualSelector for MatchAll {
 pub struct ContextSelectCons<C, A>(pub C, pub A);
 
 impl<C: OnlyContextualSelector, A: Selector> OnlyContextualSelector for ContextSelectCons<C, A> {
-    fn match_any(&self, mut context: impl ElementPath) -> bool {
+    fn match_any<'a>(&self, mut context: impl ElementPath<'a>) -> bool {
         while let Some((last, rest)) = context.split_last() {
             let element = last;
             if self.1.is_match(&element) {
@@ -172,7 +172,7 @@ impl<C: OnlyContextualSelector, A: Selector> OnlyContextualSelector for ContextS
 pub struct ContextualSelectCons<C: OnlyContextualSelector, A: Selector>(pub C, pub A);
 
 impl<C: OnlyContextualSelector, A: Selector> ContextualSelector for ContextualSelectCons<C, A> {
-    fn context_match(&self, path: impl ElementPath) -> bool {
+    fn context_match<'a>(&self, path: impl ElementPath<'a>) -> bool {
         if let Some((element, path)) = path.split_last() {
             self.1.is_match(&element) && self.0.match_any(path)
         } else {
@@ -185,7 +185,7 @@ impl<C: OnlyContextualSelector, A: Selector> ContextualSelector for ContextualSe
 pub struct GroupSelector<A: ContextualSelector, B: ContextualSelector>(A, B);
 
 impl<A: ContextualSelector, B: ContextualSelector> ContextualSelector for GroupSelector<A, B> {
-    fn context_match(&self, path: impl ElementPath) -> bool {
+    fn context_match<'a>(&self, path: impl ElementPath<'a>) -> bool {
         self.0.context_match(path.clone()) || self.1.context_match(path)
     }
 }

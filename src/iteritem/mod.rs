@@ -6,6 +6,7 @@ mod element;
 mod element_path;
 
 pub use self::element::Element;
+pub use self::element::ElementHasAttributes;
 pub use self::element_path::*;
 
 pub(crate) struct Traverser {
@@ -65,9 +66,11 @@ impl Traverser {
 }
 
 pub trait Item<'a> {
+    type Path: ElementPath<'a>;
+
     fn node(&self) -> &Node;
 
-    fn as_element(&self) -> Option<RawElement<'a>>;
+    fn as_element(&self) -> Option<<Self::Path as ElementPath<'a>>::E>;
 
     // /// The element path, not including the potential current element
     // pub(crate) fn into_context_path(self) -> ElementPath<'a>;
@@ -76,12 +79,14 @@ pub trait Item<'a> {
     // pub(crate) fn context_path(&self) -> ElementPath<'_>;
 
     /// The element path, including the element itself if it is one
-    fn as_path(&self) -> RawElementPath<'a>;
+    fn as_path(&self) -> Self::Path;
 
     /// As a quick-xml event, for serialisation, allocates for start tags but not for others
     fn as_event<'b>(&'b self) -> Event<'b>
     where
+        Self: 'b,
         'a: 'b,
+        <Self::Path as ElementPath<'a>>::E: ElementHasAttributes<'a>,
     {
         match self.node() {
             Node::Text(ref unescaped) => {
@@ -90,22 +95,25 @@ pub trait Item<'a> {
             }
             Node::DocType(ref text) => Event::DocType(BytesText::new(text)),
             Node::Start => {
-                let element = self.as_path().path.last().unwrap();
-                Event::Start(BytesStart::new(&element.name).with_attributes(&element.attrs))
+                let element = self.as_element().unwrap();
+                let name = element.name().to_owned();
+                let attributes = element.attributes();
+                let bytes = BytesStart::new(name).with_attributes(attributes);
+                Event::Start(bytes)
             }
             Node::End => {
-                let element = self.as_path().path.last().unwrap();
-                Event::End(BytesEnd::new(&element.name))
+                let element = self.as_element().unwrap();
+                Event::End(BytesEnd::new(element.name()))
             }
         }
     }
 
     /// The element path, not including the potential current element
-    fn context_path(&self) -> RawElementPath<'a> {
+    fn context_path(&self) -> Self::Path {
         match self.node() {
             Node::Start | Node::End => {
                 let path = self.as_path();
-                path.slice(0..(path.path.len() - 1))
+                path.slice(0..(path.len() - 1))
             }
             _ => self.as_path(),
         }
@@ -113,9 +121,9 @@ pub trait Item<'a> {
 
     fn map_all<E1, E2, F>(self, map: F) -> MappedItem<'a, Self, E1, E2, F>
     where
-        E1: Element,
-        E2: Element,
-        F: Fn(E1) -> E2,
+        E1: Element<'a>,
+        E2: Element<'a>,
+        F: Fn(E1) -> E2 + Clone,
         Self: Sized,
     {
         MappedItem {
@@ -127,6 +135,8 @@ pub trait Item<'a> {
 }
 
 impl<'a> Item<'a> for RawItem<'a> {
+    type Path = RawElementPath<'a>;
+
     fn as_element(&self) -> Option<RawElement<'a>> {
         match self.node {
             Node::Start | Node::End => self
@@ -152,8 +162,8 @@ impl<'a> Item<'a> for RawItem<'a> {
 pub struct MappedItem<'a, I, E1, E2, F>
 where
     I: Item<'a>,
-    E1: Element,
-    E2: Element,
+    E1: Element<'a>,
+    E2: Element<'a>,
     F: Fn(E1) -> E2,
     Self: Sized,
 {
@@ -165,19 +175,21 @@ where
 impl<'a, I, E1, E2, F> Item<'a> for MappedItem<'a, I, E1, E2, F>
 where
     I: Item<'a>,
-    E1: Element,
-    E2: Element,
-    F: Fn(E1) -> E2,
+    E1: Element<'a>,
+    E2: Element<'a>,
+    F: Fn(E1) -> E2 + Clone,
 {
+    type Path = <I as Item<'a>>::Path;
+
     fn node(&self) -> &Node {
         self.inner.node()
     }
 
-    fn as_element(&self) -> Option<RawElement<'a>> {
+    fn as_element(&self) -> Option<<Self::Path as ElementPath<'a>>::E> {
         todo!("Element also needs to be a trait")
     }
 
-    fn as_path(&self) -> RawElementPath<'a> {
+    fn as_path(&self) -> Self::Path {
         todo!("ElementPath should be a trait")
     }
 }

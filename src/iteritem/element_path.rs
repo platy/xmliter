@@ -5,6 +5,8 @@ use quick_xml::{events::BytesStart, name::QName, Reader};
 
 use crate::Element;
 
+use super::ElementHasAttributes;
+
 /// An owned path of elements
 #[derive(Debug, Clone)]
 pub struct ElementPathBuf {
@@ -85,16 +87,6 @@ impl<'a> RawElementPath<'a> {
             _buf: self.buf,
         }
     }
-
-    pub(crate) fn slice<I: SliceIndex<[NormalisedElement], Output = [NormalisedElement]>>(
-        &self,
-        index: I,
-    ) -> Self {
-        Self {
-            path: &self.path[index],
-            buf: self.buf,
-        }
-    }
 }
 
 impl<'a> fmt::Debug for RawElementPath<'a> {
@@ -106,16 +98,22 @@ impl<'a> fmt::Debug for RawElementPath<'a> {
     }
 }
 
-pub trait ElementPath: Clone {
-    type E: Element;
+pub trait ElementPath<'a>: Clone {
+    type E: Element<'a>;
     fn len(&self) -> usize;
     fn get(&self, idx: usize) -> Option<Self::E>;
+    // maybe we only need slice
     fn split_last(&self) -> Option<(Self::E, Self)>
     where
         Self: Sized;
+    fn slice<I: SliceIndex<[NormalisedElement], Output = [NormalisedElement]>>(
+        &self,
+        // not sure about this type, it looks weird
+        index: I,
+    ) -> Self;
 }
 
-impl<'a> ElementPath for RawElementPath<'a> {
+impl<'a> ElementPath<'a> for RawElementPath<'a> {
     type E = RawElement<'a>;
     fn len(&self) -> usize {
         self.path.len()
@@ -144,11 +142,22 @@ impl<'a> ElementPath for RawElementPath<'a> {
             None
         }
     }
+
+    fn slice<I: SliceIndex<[NormalisedElement], Output = [NormalisedElement]>>(
+        &self,
+        index: I,
+    ) -> Self {
+        Self {
+            path: &self.path[index],
+            buf: self.buf,
+        }
+    }
 }
 
 /// Currently Heap allocated, but to be fixed size with no references, instead should only contain slice index ranges into vecs stored on element paths
 #[derive(Clone)]
-pub(crate) struct NormalisedElement {
+// TODO shouldn't be pub really
+pub struct NormalisedElement {
     pub(crate) name: String,
     pub(crate) attrs: Vec<NormalisedAttribute>,
 }
@@ -165,7 +174,7 @@ impl fmt::Debug for NormalisedElement {
 
 /// Currently Heap allocated, but to be fixed size with no references, instead should only contain slice index ranges into vecs stored on element paths
 #[derive(Clone, Debug)]
-pub(crate) struct NormalisedAttribute {
+pub struct NormalisedAttribute {
     pub(crate) name: String,
     pub(crate) value: String,
 }
@@ -216,8 +225,12 @@ pub struct RawElement<'a> {
     pub(crate) _buf: &'a ElementPathBuf,
 }
 
-impl<'a> RawElement<'a> {
-    pub(crate) fn attributes(&self) -> std::slice::Iter<'_, NormalisedAttribute> {
+impl<'e> ElementHasAttributes<'e> for RawElement<'e> {
+    type Attribute = &'e NormalisedAttribute;
+
+    type Attributes = std::slice::Iter<'e, NormalisedAttribute>;
+
+    fn attributes(&self) -> Self::Attributes {
         self.element.attrs.iter()
     }
 }

@@ -8,7 +8,7 @@ pub use itemext::{IncludeItem, ItemExt};
 pub use iteritem::{Element, Item, RawElement, RawItem};
 pub use selector::ContextualSelector;
 
-use iteritem::Traverser;
+use iteritem::{ElementHasAttributes, ElementPath, Traverser};
 
 pub trait HtmlIterator {
     type Item<'a>: Item<'a>
@@ -47,16 +47,20 @@ pub trait HtmlIterator {
     fn write_into(mut self, f: impl io::Write)
     where
         Self: Sized,
+        for<'a> <<Self::Item<'a> as Item<'a>>::Path as ElementPath<'a>>::E:
+            ElementHasAttributes<'a>,
     {
         let mut writer = HtmlWriter::from_writer(f);
         while let Some(item) = self.next() {
-            writer.write_item(&item)
+            writer.write_item(&item);
         }
     }
 
     fn to_string(self) -> String
     where
         Self: Sized,
+        for<'a> <<Self::Item<'a> as Item<'a>>::Path as ElementPath<'a>>::E:
+            ElementHasAttributes<'a>,
     {
         let mut buf = vec![];
         self.write_into(Cursor::new(&mut buf));
@@ -75,7 +79,11 @@ impl<W: io::Write> HtmlWriter<W> {
         }
     }
 
-    pub fn write_item(&mut self, item: &dyn Item) {
+    pub fn write_item<'e, I>(&mut self, item: &I)
+    where
+        I: Item<'e>,
+        <<I as Item<'e>>::Path as ElementPath<'e>>::E: ElementHasAttributes<'e>,
+    {
         self.inner.write_event(&item.as_event()).unwrap();
     }
 }

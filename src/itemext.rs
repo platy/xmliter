@@ -1,7 +1,7 @@
 use std::ops::RangeFrom;
 
 use crate::{
-    iteritem::{ElementPath, Node, RawElement, RawElementPath},
+    iteritem::{ElementPath, Node},
     selector::ContextualSelector,
     Item,
 };
@@ -36,18 +36,21 @@ where
     }
 }
 
+/// Wraps item in a filter on it's path which elides the first part of it's path
 pub struct IncludeItem<I> {
     range: RangeFrom<usize>,
     inner: I,
 }
 
 impl<'a, I: Item<'a>> Item<'a> for IncludeItem<I> {
-    fn as_element(&self) -> Option<RawElement<'a>> {
-        todo!()
+    type Path = <I as Item<'a>>::Path;
+
+    fn as_element(&self) -> Option<<Self::Path as ElementPath<'a>>::E> {
+        self.inner.as_element()
     }
 
-    fn as_path(&self) -> RawElementPath<'a> {
-        self.inner.as_path().slice(self.range.clone()) // feels like this could be stored instead of the range
+    fn as_path(&self) -> Self::Path {
+        self.inner.as_path().slice(self.range.clone())
     }
 
     /// maybe this shouldn't be exposed at all we currenlty only need it to know whether this is an element, something needed for as_element too
