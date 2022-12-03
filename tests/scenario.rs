@@ -91,7 +91,7 @@ fn mutate_for() {
     let mut out = Vec::new();
     let mut writer = HtmlWriter::from_writer(&mut out);
     while let Some(item) = iter.next() {
-        let item = item.map_all::<RawElement, _, _>(
+        let item = item.map_all::<_, _>(
             |element| // on the item, `map_all` means this mapping applies to every element in the path
             element.filter_attributes(|name, _value| name != "id"),
         );

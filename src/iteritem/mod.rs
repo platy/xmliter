@@ -119,11 +119,11 @@ pub trait Item<'a> {
         }
     }
 
-    fn map_all<E1, E2, F>(self, map: F) -> MappedItem<'a, Self, E1, E2, F>
+    fn map_all<E2, F>(self, map: F) -> MappedItem<'a, Self, E2, F>
     where
-        E1: Element<'a>,
+        // E1: Element<'a>,
         E2: Element<'a>,
-        F: Fn(E1) -> E2 + Clone,
+        F: Fn(<<Self as Item<'a>>::Path as ElementPath<'a>>::E) -> E2 + Clone,
         Self: Sized,
     {
         MappedItem {
@@ -159,27 +159,28 @@ impl<'a> Item<'a> for RawItem<'a> {
 }
 
 /// Maps each element in the path, the node type itself is unchanged
-pub struct MappedItem<'a, I, E1, E2, F>
+pub struct MappedItem<'a, I, E2, F>
 where
     I: Item<'a>,
-    E1: Element<'a>,
+    // E1: Element<'a>,
     E2: Element<'a>,
-    F: Fn(E1) -> E2,
+    F: Fn(<<I as Item<'a>>::Path as ElementPath<'a>>::E) -> E2,
     Self: Sized,
 {
     _map: F,
     inner: I,
-    _phantom: PhantomData<&'a (E1, E2)>,
+    _phantom: PhantomData<&'a E2>,
 }
 
-impl<'a, I, E1, E2, F> Item<'a> for MappedItem<'a, I, E1, E2, F>
+impl<'a, I, E2, F> Item<'a> for MappedItem<'a, I, E2, F>
 where
     I: Item<'a>,
-    E1: Element<'a>,
+    // <<I as Item<'a>>::Path as ElementPath<'a>>::E: E1,
+    // E1: Element<'a>,
     E2: Element<'a>,
-    F: Fn(E1) -> E2 + Clone,
+    F: Fn(<<I as Item<'a>>::Path as ElementPath<'a>>::E) -> E2 + Clone,
 {
-    type Path = <I as Item<'a>>::Path;
+    type Path = MappedPath<'a, <I as Item<'a>>::Path, E2, F>;
 
     fn node(&self) -> &Node {
         self.inner.node()
@@ -191,5 +192,70 @@ where
 
     fn as_path(&self) -> Self::Path {
         todo!("ElementPath should be a trait")
+    }
+}
+
+/// Maps each element in the path, the node type itself is unchanged
+pub struct MappedPath<'a, P, E2, F>
+where
+    P: ElementPath<'a>,
+    // E1: Element<'a>,
+    E2: Element<'a>,
+    F: Fn(<P as ElementPath<'a>>::E) -> E2,
+    Self: Sized,
+{
+    map: F,
+    inner: P,
+    _phantom: PhantomData<&'a E2>,
+}
+
+impl<'a, P, E2, F> Clone for MappedPath<'a, P, E2, F>
+where
+    P: ElementPath<'a>,
+    // E1: Element<'a>,
+    E2: Element<'a>,
+    F: Fn(<P as ElementPath<'a>>::E) -> E2 + Clone,
+    Self: Sized,
+{
+    fn clone(&self) -> Self {
+        Self {
+            map: self.map.clone(),
+            inner: self.inner.clone(),
+            _phantom: self._phantom,
+        }
+    }
+}
+
+impl<'a, P, E2, F> ElementPath<'a> for MappedPath<'a, P, E2, F>
+where
+    P: ElementPath<'a>,
+    // E1: Element<'a>,
+    E2: Element<'a>,
+    F: Fn(<P as ElementPath<'a>>::E) -> E2 + Clone,
+    Self: Sized,
+{
+    type E = E2;
+
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    fn get(&self, idx: usize) -> Option<Self::E> {
+        self.inner.get(idx).map(&self.map)
+    }
+
+    fn split_last(&self) -> Option<(Self::E, Self)>
+    where
+        Self: Sized,
+    {
+        todo!()
+    }
+
+    fn slice<I: std::slice::SliceIndex<[NormalisedElement], Output = [NormalisedElement]>>(
+        &self,
+        // not sure about this type, it looks weird
+        index: I,
+    ) -> Self {
+        todo!()
     }
 }

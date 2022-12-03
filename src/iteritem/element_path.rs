@@ -179,6 +179,12 @@ pub struct NormalisedAttribute {
     pub(crate) value: String,
 }
 
+impl<'a> From<&'a NormalisedAttribute> for (&'a str, &'a str) {
+    fn from(val: &'a NormalisedAttribute) -> Self {
+        (&val.name, &val.value)
+    }
+}
+
 impl<'a> From<&'a NormalisedAttribute> for quick_xml::events::attributes::Attribute<'a> {
     fn from(NormalisedAttribute { name, value }: &'a NormalisedAttribute) -> Self {
         let key = QName(name.as_bytes());
@@ -226,7 +232,7 @@ pub struct RawElement<'a> {
 }
 
 impl<'e> ElementHasAttributes<'e> for RawElement<'e> {
-    type Attribute = &'e NormalisedAttribute;
+    // type Attribute = &'e NormalisedAttribute;
 
     type Attributes = std::slice::Iter<'e, NormalisedAttribute>;
 

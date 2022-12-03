@@ -26,8 +26,8 @@ pub trait Element<'a> {
     }
 }
 pub trait ElementHasAttributes<'a> {
-    type Attribute: Into<quick_xml::events::attributes::Attribute<'a>>;
-    type Attributes: Iterator<Item = Self::Attribute>;
+    // type Attribute: Into<(&'a str, &'a str)>;
+    type Attributes: Iterator<Item = &'a NormalisedAttribute>;
     fn attributes(&self) -> Self::Attributes;
 }
 
@@ -83,5 +83,39 @@ where
         self.inner
             .attr(search)
             .and_then(|value| (self.predicate)(search, value).then_some(value))
+    }
+}
+
+impl<'a, I, P> ElementHasAttributes<'a> for FilterAttributes<I, P>
+where
+    I: ElementHasAttributes<'a>,
+    P: Fn(&str, &str) -> bool + Clone,
+{
+    // type Attribute = <I as ElementHasAttributes<'a>>::Attribute;
+    type Attributes = FilteredAttributes<<I as ElementHasAttributes<'a>>::Attributes, P>;
+
+    fn attributes(&self) -> Self::Attributes {
+        FilteredAttributes {
+            iter: self.inner.attributes(),
+            predicate: self.predicate.clone(),
+        }
+    }
+}
+
+pub struct FilteredAttributes<A, P> {
+    iter: A,
+    predicate: P,
+}
+
+impl<'a, A, P> Iterator for FilteredAttributes<A, P>
+where
+    A: Iterator<Item = &'a NormalisedAttribute>,
+    P: Fn(&str, &str) -> bool,
+{
+    type Item = <A as Iterator>::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter
+            .find(|attr| (self.predicate)(&attr.name, &attr.value))
     }
 }
