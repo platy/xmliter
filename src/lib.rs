@@ -1,3 +1,4 @@
+#![doc = include_str!("Readme.md")]
 #![allow(clippy::manual_map)] // have ben having some trouble with `Option::map` with these HKT's
 
 use std::{
