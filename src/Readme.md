@@ -13,60 +13,115 @@ For simple examples you can use the chaining methods, but they obfuscate how a m
 ### Remove everything except the main element
 
 ```rust
-# let read = BufReader::new(Cursor::new(""));
-write!(&mut write, "{}", HtmlIter::from_reader(read).include(css_select!("main")));
+# use xmliter::*;
+    let read = std::io::Cursor::new(
+        "<!DOCTYPE html><html><body><main>content</main></body></html>",
+    );
+    let out = HtmlIter::from_reader(read)
+        .include(css_select!("main"))
+        .to_string();
+    assert_eq!(out, "<main>content</main>");
 ```
 
 ```rust
-# let read = BufReader::new(Cursor::new(""));
-let mut iter = HtmlIter::from_reader(read);
-while let Some(item) = iter.next() {
-    if let Some(under_main) = item.include(css_select!("main")) { // anything without main in the path is ignored, and any context with main is stripped before the main
-        write!(&mut write, "{}", under_main)?
+# use xmliter::*;
+    let read = std::io::Cursor::new(
+        "<!DOCTYPE html><html><body><main>content</main></body></html>",
+    );
+    let mut iter = HtmlIter::from_reader(read);
+    let mut out = Vec::new();
+    let mut writer = HtmlWriter::from_writer(&mut out);
+    while let Some(item) = iter.next() {
+        if let Some(under_main) = item.include(&css_select!("main")) {
+            // anything without main in the path is ignored, and any context with main is stripped before the main
+            writer.write_item(&under_main);
+        }
     }
-}
-# Ok::<(), io::Error>(())
+    assert_eq!(String::from_utf8(out).unwrap(), "<main>content</main>");
 ```
 
 ### Remove everything with the class "bloat" under "main"
 
 ```rust
-# let read = BufReader::new(Cursor::new(""));
-write!(&mut write, "{}", HtmlIter::from_reader(read).exclude(css_select!(("main") (."bloat"))));
+# use xmliter::*;
+    let read = std::io::Cursor::new(
+        r#"<!DOCTYPE html><html><body><main><p>content</p><p class="bloat">bloat</p></main></body></html>"#,
+    );
+    let out = HtmlIter::from_reader(read)
+        .exclude(css_select!(("main") (."bloat")))
+        .to_string();
+    assert_eq!(
+        out,
+        "<!DOCTYPE html><html><body><main><p>content</p></main></body></html>"
+    );
 ```
 
 ```rust
-# let read = BufReader::new(Cursor::new(""));
-let mut iter = HtmlIter::from_reader(read);
-while let Some(item) = iter.next() {
-    if !item.match_any(css_select!(("main") (."bloat"))) { // if nothing in the item's path matches
-        write!(&mut write, "{}", item)?
+# use xmliter::*;
+    let read = std::io::Cursor::new(
+        r#"<!DOCTYPE html><html><body><main><p>content</p><p class="bloat">bloat</p></main></body></html>"#,
+    );
+    let mut iter = HtmlIter::from_reader(read);
+    let mut out = Vec::new();
+    let mut writer = HtmlWriter::from_writer(&mut out);
+    while let Some(item) = iter.next() {
+        if !css_select!(("main") (."bloat")).match_any(item.as_path()) {
+            // if nothing in the item's path matches
+            writer.write_item(&item);
+        }
     }
-}
+    assert_eq!(
+        String::from_utf8(out)?,
+        "<!DOCTYPE html><html><body><main><p>content</p></main></body></html>"
+    );
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 ### Remove all the `id`s from the document
 
 ```rust
-write!(&mut write, "{}", HtmlIter::from_reader(read).map_all(|element| // on the iterator, `map_all` means that this mapping applies to every element in the document
-    element.map_attributes(|attributes| // to map the element, we map the attributes, meaning no allocations need to take place, and any elements later ignored don't actually need to be processed
-        attributes.filter(|name, _value|name != "id")))); // the attributes are a regular `std::iter::Iterator`
+# use lending_iterator::HKT;
+# use xmliter::*;
+    let read = std::io::Cursor::new(
+        r#"<!DOCTYPE html><html><body><main id="id"><p id="first">content</p><p class="bloat" id="second">bloat</p></main></body></html>"#,
+    );
+    let out = HtmlIter::from_reader(read)
+        .map_all::<HKT!(FilterAttributes<RawElement<'_>, _>), _>(
+            |_, element| // on the iterator, `map_all` means that this mapping applies to every element in the document
+                element.filter_attributes(|name, _value|name != "id"),
+        )
+        .to_string(); // the attributes are a regular `std::iter::Iterator`
+    assert_eq!(
+        out,
+        r#"<!DOCTYPE html><html><body><main><p>content</p><p class="bloat">bloat</p></main></body></html>"#
+    );
 ```
 
 ```rust
-# let read = BufReader::new(Cursor::new(""));
-let mut iter = HtmlIter::from_reader(read);
-while let Some(item) = iter.next() {
-    let item = item.map_all(|element| // on the item, `map_all` means this mapping applies to every element in the path
-        element.map_attributes(|attributes|
-            attributes.filter(|name, _value|name != "id")));
-    write!(&mut write, "{}", item)?
-}
+# use xmliter::*;
+    let read = std::io::Cursor::new(
+        r#"<!DOCTYPE html><html><body><main id="id"><p id="first">content</p><p class="bloat" id="second">bloat</p></main></body></html>"#,
+    );
+    let mut iter = HtmlIter::from_reader(read);
+    let mut out = Vec::new();
+    let mut writer = HtmlWriter::from_writer(&mut out);
+    while let Some(item) = iter.next() {
+        let item = item.map_all(
+            |_, element| // on the item, `map_all` means this mapping applies to every element in the path
+            element.filter_attributes(|name, _value| name != "id"),
+        );
+        writer.write_item(&item);
+    }
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        r#"<!DOCTYPE html><html><body><main><p>content</p><p class="bloat">bloat</p></main></body></html>"#
+    );
 ```
 
 ### Extract all hyperlinks
 
 ```rust
+# use xmliter::*;
 let links: Vec<_> = HtmlIter::from_reader(read).filter_map(|item| (item.name == "a").then(|| item.attr("href"))).collect(); // methods on the iterator which are identically named to those on `std::iter::Iterator` work in the expected way, returning an `std::iter::Iterator`.
 ```
 
@@ -75,7 +130,8 @@ let links: Vec<_> = HtmlIter::from_reader(read).filter_map(|item| (item.name == 
 Here is a more complex example combining both chaining transformers and an imperative loop. The construction of a `Book` involves storing selected bits of data while looping and, when complete constructing a complete object if possible. This is best achieved with an imperative loop and mutable state.
 
 ```rust
-# let read = BufReader::new(Cursor::new(""));
+# use xmliter::*;
+# let read = std::io::Cursor::new("");
 struct Book {
     name: String,
     description: Option<String>,
@@ -122,6 +178,6 @@ The syntax of our selectors are inspired by CSS, to support CSS exactly we would
 
 Let me know if you have any better ideas.
 
-```
+```ignore
 div#main .bloat => ("div" #"main") (."bloat)
 ```
