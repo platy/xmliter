@@ -5,8 +5,12 @@ use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 mod element;
 mod element_path;
 
+use crate::ElementOfItem;
+use crate::ElementOfPath;
+
 pub use self::element::Element;
 pub use self::element::ElementHasAttributes;
+pub use self::element::FilterAttributes;
 pub use self::element_path::*;
 
 pub(crate) struct Traverser {
@@ -123,7 +127,7 @@ pub trait Item<'a> {
     where
         // E1: Element<'a>,
         E2: Element<'a>,
-        F: Fn(<<Self as Item<'a>>::Path as ElementPath<'a>>::E) -> E2 + Clone,
+        F: Fn([&'a (); 0], ElementOfItem<'a, Self>) -> E2 + Clone,
         Self: Sized,
     {
         MappedItem {
@@ -164,7 +168,7 @@ where
     I: Item<'a>,
     // E1: Element<'a>,
     E2: Element<'a>,
-    F: Fn(<<I as Item<'a>>::Path as ElementPath<'a>>::E) -> E2,
+    F: Fn([&'a (); 0], ElementOfItem<'a, I>) -> E2,
     Self: Sized,
 {
     map: F,
@@ -178,7 +182,7 @@ where
     // <<I as Item<'a>>::Path as ElementPath<'a>>::E: E1,
     // E1: Element<'a>,
     E2: Element<'a>,
-    F: Fn(<<I as Item<'a>>::Path as ElementPath<'a>>::E) -> E2 + Clone,
+    F: Fn([&'a (); 0], ElementOfItem<'a, I>) -> E2 + Clone,
 {
     type Path = MappedPath<'a, <I as Item<'a>>::Path, E2, F>;
 
@@ -186,8 +190,13 @@ where
         self.inner.node()
     }
 
-    fn as_element(&self) -> Option<<Self::Path as ElementPath<'a>>::E> {
-        self.inner.as_element().map(&self.map)
+    fn as_element(&self) -> Option<E2> {
+        let this = self.inner.as_element();
+        let f = &self.map;
+        match this {
+            Some(x) => Some(f([], x)),
+            None => None,
+        }
     }
 
     fn as_path(&self) -> Self::Path {
@@ -205,7 +214,7 @@ where
     P: ElementPath<'a>,
     // E1: Element<'a>,
     E2: Element<'a>,
-    F: Fn(<P as ElementPath<'a>>::E) -> E2,
+    F: Fn([&'a (); 0], ElementOfPath<'a, P>) -> E2,
     Self: Sized,
 {
     map: F,
@@ -218,7 +227,7 @@ where
     P: ElementPath<'a>,
     // E1: Element<'a>,
     E2: Element<'a>,
-    F: Fn(<P as ElementPath<'a>>::E) -> E2 + Clone,
+    F: Fn([&'a (); 0], ElementOfPath<'a, P>) -> E2 + Clone,
     Self: Sized,
 {
     fn clone(&self) -> Self {
@@ -235,17 +244,22 @@ where
     P: ElementPath<'a>,
     // E1: Element<'a>,
     E2: Element<'a>,
-    F: Fn(<P as ElementPath<'a>>::E) -> E2 + Clone,
+    F: Fn([&'a (); 0], ElementOfPath<'a, P>) -> E2 + Clone,
     Self: Sized,
 {
-    type E = E2;
+    type E = F::Output;
 
     fn len(&self) -> usize {
         self.inner.len()
     }
 
     fn get(&self, idx: usize) -> Option<Self::E> {
-        self.inner.get(idx).map(&self.map)
+        let this = self.inner.get(idx);
+        let f = &self.map;
+        match this {
+            Some(x) => Some(f([], x)),
+            None => None,
+        }
     }
 
     fn split_last(&self) -> Option<(Self::E, Self)>

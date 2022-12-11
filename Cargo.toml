@@ -6,3 +6,4 @@ edition = "2021"
 
 [dependencies]
 quick-xml = "0.26"
+lending-iterator = "0.1.6"
